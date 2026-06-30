@@ -78,14 +78,8 @@ export async function generateDocumentHtmlBody(input: {
   markdown: string;
   notionUrl: string;
 }): Promise<string> {
-  if (shouldUseCodex()) {
-    try {
-      return await generateHtmlWithCodex(input);
-    } catch (error) {
-      if (!isMissingCodexBinaryError(error)) {
-        throw error;
-      }
-    }
+  if (optionalEnv("CODEX_GENERATION_ENABLED") !== "false" && hasCodexCredentials()) {
+    return generateHtmlWithCodex(input);
   }
 
   return renderHtmlBody(documentFromMarkdown(input));
@@ -97,6 +91,10 @@ function isMissingCodexBinaryError(error: unknown): boolean {
 
 function shouldUseCodex(): boolean {
   if (optionalEnv("CODEX_GENERATION_ENABLED") === "false") return false;
+  return hasCodexCredentials();
+}
+
+function hasCodexCredentials(): boolean {
   return Boolean(
     optionalEnv("CODEX_ACCESS_TOKEN") ||
       optionalEnv("CODEX_AUTH_JSON") ||
@@ -112,7 +110,7 @@ async function generateWithCodex(input: {
   const markdownPath = join(dir, "notion.md");
   const schemaPath = join(dir, "schema.json");
   const outputPath = join(dir, "document.json");
-  const codexBin = optionalEnv("CODEX_BIN") ?? "codex";
+  const codexBin = codexBinaryPath();
   const authEnv = await prepareCodexAuthEnv(dir);
 
   try {
@@ -168,7 +166,7 @@ async function generateHtmlWithCodex(input: {
   const dir = await mkdtemp(join(tmpdir(), "notion-to-html-codex-"));
   const markdownPath = join(dir, "notion.md");
   const outputPath = join(dir, "page.html");
-  const codexBin = optionalEnv("CODEX_BIN") ?? "codex";
+  const codexBin = codexBinaryPath();
   const authEnv = await prepareCodexAuthEnv(dir);
 
   try {
@@ -348,6 +346,10 @@ function sanitizeGeneratedHtml(raw: string): string {
     .replace(/\s(href|src)\s*=\s*"javascript:[^"]*"/gi, ' $1="#"')
     .replace(/\s(href|src)\s*=\s*'javascript:[^']*'/gi, " $1='#'")
     .trim();
+}
+
+function codexBinaryPath(): string {
+  return optionalEnv("CODEX_BIN") ?? join(process.cwd(), "node_modules", ".bin", "codex");
 }
 
 async function prepareCodexAuthEnv(workDir: string): Promise<Record<string, string>> {

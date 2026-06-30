@@ -54,4 +54,21 @@ describe("Codex document-to-html generation", () => {
 
     vi.unstubAllEnvs();
   });
+
+  it("reports a missing Codex binary when Codex credentials are configured", async () => {
+    vi.resetModules();
+    vi.doUnmock("node:child_process");
+    vi.unstubAllEnvs();
+    vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+    vi.stubEnv("CODEX_BIN", "missing-codex-binary");
+
+    const { generateDocumentHtmlBody } = await import("@/lib/codex-generator");
+
+    await expect(generateDocumentHtmlBody({
+      notionUrl: "https://notion.so/test",
+      markdown: "# 1Money",
+    })).rejects.toMatchObject({ code: "ENOENT" });
+
+    vi.unstubAllEnvs();
+  });
 });
