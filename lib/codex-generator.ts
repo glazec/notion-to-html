@@ -165,7 +165,8 @@ async function generateHtmlWithCodex(input: {
 }): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "notion-to-html-codex-"));
   const markdownPath = join(dir, "notion.md");
-  const outputPath = join(dir, "page.html");
+  const artifactPath = join(dir, "artifact.html");
+  const outputPath = join(dir, "last-message.html");
   const codexBin = codexBinaryPath();
   const authEnv = await prepareCodexAuthEnv(dir);
 
@@ -179,9 +180,11 @@ async function generateHtmlWithCodex(input: {
         "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",
+        "--cd",
+        dir,
         "-o",
         outputPath,
-        documentToHtmlPrompt(input.notionUrl),
+        documentToHtmlPrompt(input.notionUrl, "artifact.html"),
       ],
       {
         cwd: dir,
@@ -195,20 +198,21 @@ async function generateHtmlWithCodex(input: {
     );
 
     const { stdout, stderr } = normalizeExecResult(result);
-    const raw = await readCodexHtmlArtifact(outputPath, stdout, stderr);
+    const raw = await readCodexHtmlArtifact([artifactPath, outputPath], stdout, stderr);
     return sanitizeGeneratedHtml(raw);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 }
 
-function documentToHtmlPrompt(notionUrl: string): string {
+function documentToHtmlPrompt(notionUrl: string, artifactFile: string): string {
   return [
     "Use the document-to-html skill to convert notion.md into a polished HTML page.",
     "Source URL:",
     notionUrl,
     "",
     "Output contract:",
+    `- Write the exact HTML artifact to ${artifactFile} in the current working directory.`,
     "- The final answer must be only the HTML artifact. No markdown fences, explanation, JSON, or comments.",
     "- Return a body artifact for an existing app shell: include one <style data-document-to-html> tag and one <main class=\"document-html-page wrap\"> root.",
     "- Do not include <!doctype>, <html>, <head>, <body>, <script>, iframe, object, embed, external CSS, external JS, or CDN fonts.",
@@ -250,23 +254,27 @@ function normalizeExecResult(result: unknown): {
 }
 
 async function readCodexHtmlArtifact(
-  outputPath: string,
+  outputPaths: string[],
   stdout: string | Buffer,
   stderr: string | Buffer,
 ): Promise<string> {
-  try {
-    const fileOutput = await readFile(outputPath, "utf8");
-    if (fileOutput.trim()) return fileOutput;
-  } catch (error) {
-    if (!isMissingCodexBinaryError(error)) throw error;
+  for (const outputPath of outputPaths) {
+    try {
+      const fileOutput = await readFile(outputPath, "utf8");
+      if (fileOutput.trim()) return fileOutput;
+    } catch (error) {
+      if (!isMissingCodexBinaryError(error)) throw error;
+    }
   }
 
-  const stdoutCandidate = extractHtmlCandidate(outputToText(stdout));
+  const stdoutText = outputToText(stdout);
+  const stdoutCandidate = extractHtmlCandidate(stdoutText);
   if (stdoutCandidate) return stdoutCandidate;
 
   const stderrText = outputToText(stderr).trim();
   const suffix = stderrText ? ` Stderr: ${truncateForError(stderrText)}` : "";
-  throw new Error(`Codex did not produce an HTML artifact.${suffix}`);
+  const stdoutSuffix = stdoutText.trim() ? ` Stdout: ${truncateForError(stdoutText.trim())}` : "";
+  throw new Error(`Codex did not produce an HTML artifact.${suffix}${stdoutSuffix}`);
 }
 
 function outputToText(output: string | Buffer): string {
