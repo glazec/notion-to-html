@@ -5,9 +5,10 @@ import {
   setPageGenerationProgress,
   setPageStatus,
 } from "@/lib/page-store";
-import { generateDocumentJson } from "@/lib/codex-generator";
+import { generateDocumentHtmlBody } from "@/lib/codex-generator";
 import { fetchPublicNotionContent } from "@/lib/firecrawl";
-import { renderHtmlBody, wrapServedHtml } from "@/lib/render-html";
+import { documentFromMarkdown } from "@/lib/document";
+import { wrapServedHtml } from "@/lib/render-html";
 import { sha256 } from "@/lib/hash";
 
 export async function generatePage(pageKey: string): Promise<{
@@ -38,10 +39,10 @@ export async function generatePage(pageKey: string): Promise<{
     await setPageGenerationProgress({
       pageKey,
       status: "generating",
-      step: "Building document JSON",
+      step: "Generating document-to-html page",
       progress: 55,
     });
-    const documentJson = await generateDocumentJson({
+    const documentJson = documentFromMarkdown({
       markdown: source.markdown,
       notionUrl: source.url,
     });
@@ -51,7 +52,10 @@ export async function generatePage(pageKey: string): Promise<{
       step: "Rendering HTML",
       progress: 75,
     });
-    const body = renderHtmlBody(documentJson);
+    const body = await generateDocumentHtmlBody({
+      markdown: source.markdown,
+      notionUrl: source.url,
+    });
     const contentHash = sha256(body);
     const objectKey = `pages/${source.pageId}/${contentHash}/index.html`;
 
