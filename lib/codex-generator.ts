@@ -187,7 +187,7 @@ async function generateHtmlWithCodex(input: {
       ],
       {
         cwd: dir,
-        timeout: 300_000,
+        timeout: 12 * 60_000,
         maxBuffer: 20 * 1024 * 1024,
         env: {
           ...process.env,

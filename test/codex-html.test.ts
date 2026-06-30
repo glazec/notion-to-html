@@ -7,15 +7,15 @@ describe("Codex document-to-html generation", () => {
     vi.unstubAllEnvs();
     vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
 
-    const calls: Array<{ args: string[] }> = [];
+    const calls: Array<{ args: string[]; options: { timeout?: number } }> = [];
     vi.doMock("node:child_process", () => ({
       execFile: (
         _file: string,
         args: string[],
-        _options: unknown,
+        options: { timeout?: number },
         callback: (error: Error | null, stdout?: string, stderr?: string) => void,
       ) => {
-        calls.push({ args });
+        calls.push({ args, options });
         const outputPath = args[args.indexOf("-o") + 1];
         writeFileSync(outputPath, [
           "```html",
@@ -45,6 +45,7 @@ describe("Codex document-to-html generation", () => {
     expect(prompt).toContain("warm paper");
     expect(prompt).toContain("terracotta");
     expect(prompt).toContain("details class=\"x\"");
+    expect(calls[0].options.timeout).toBeGreaterThanOrEqual(10 * 60 * 1000);
     expect(body).toContain("data-document-to-html");
     expect(body).toContain("document-html-page wrap");
     expect(body).toContain("<details class=\"x\">");

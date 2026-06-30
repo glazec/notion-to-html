@@ -4,6 +4,9 @@ import { buildServedHtml } from "@/lib/generation";
 import { getCurrentVersion, setPageGenerationProgress } from "@/lib/page-store";
 import { progressBodyHtml, wrapServedHtml } from "@/lib/render-html";
 
+const queuedRecoveryMs = 60 * 1000;
+const generatingRecoveryMs = 15 * 60 * 1000;
+
 export async function servedPageResponse(page: PageRecord, requestUrl: string): Promise<Response> {
   const version = await getCurrentVersion(page.page_key);
   let displayPage = page;
@@ -50,10 +53,14 @@ export async function servedPageResponse(page: PageRecord, requestUrl: string): 
 }
 
 function shouldStartGeneration(page: PageRecord): boolean {
-  if (page.status === "queued") return true;
+  if (page.status === "queued") {
+    if (page.current_hash || page.dirty_at) return false;
+    return Date.now() - page.updated_at.getTime() > queuedRecoveryMs;
+  }
+
   if (page.status !== "generating") return false;
 
-  return Date.now() - page.updated_at.getTime() > 60 * 1000;
+  return Date.now() - page.updated_at.getTime() > generatingRecoveryMs;
 }
 
 async function enqueueGeneration(page: PageRecord, requestUrl: string): Promise<PageRecord> {
