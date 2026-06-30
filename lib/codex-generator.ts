@@ -172,7 +172,7 @@ async function generateHtmlWithCodex(input: {
   try {
     await writeFile(markdownPath, input.markdown, "utf8");
 
-    await execFileAsync(
+    const result = await execFileAsync(
       codexBin,
       [
         "exec",
@@ -194,7 +194,8 @@ async function generateHtmlWithCodex(input: {
       },
     );
 
-    const raw = await readFile(outputPath, "utf8");
+    const { stdout, stderr } = normalizeExecResult(result);
+    const raw = await readCodexHtmlArtifact(outputPath, stdout, stderr);
     return sanitizeGeneratedHtml(raw);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -208,7 +209,7 @@ function documentToHtmlPrompt(notionUrl: string): string {
     notionUrl,
     "",
     "Output contract:",
-    "- Return only HTML. No markdown fences, explanation, JSON, or comments.",
+    "- The final answer must be only the HTML artifact. No markdown fences, explanation, JSON, or comments.",
     "- Return a body artifact for an existing app shell: include one <style data-document-to-html> tag and one <main class=\"document-html-page wrap\"> root.",
     "- Do not include <!doctype>, <html>, <head>, <body>, <script>, iframe, object, embed, external CSS, external JS, or CDN fonts.",
     "- Preserve public image URLs as <img> when useful. Preserve source links with normal <a href> links.",
@@ -228,6 +229,66 @@ function documentToHtmlPrompt(notionUrl: string): string {
     "",
     "Build a complete page from notion.md. If the document has quantitative content, use KPI cards, a small chart, or a table. If it has a mechanism, use a simple token-driven SVG concept diagram. Every major claim should have an expandable detail row.",
   ].join("\n");
+}
+
+function normalizeExecResult(result: unknown): {
+  stdout: string | Buffer;
+  stderr: string | Buffer;
+} {
+  if (result && typeof result === "object" && "stdout" in result) {
+    const execResult = result as { stdout?: string | Buffer; stderr?: string | Buffer };
+    return {
+      stdout: execResult.stdout ?? "",
+      stderr: execResult.stderr ?? "",
+    };
+  }
+
+  return {
+    stdout: typeof result === "string" || Buffer.isBuffer(result) ? result : "",
+    stderr: "",
+  };
+}
+
+async function readCodexHtmlArtifact(
+  outputPath: string,
+  stdout: string | Buffer,
+  stderr: string | Buffer,
+): Promise<string> {
+  try {
+    const fileOutput = await readFile(outputPath, "utf8");
+    if (fileOutput.trim()) return fileOutput;
+  } catch (error) {
+    if (!isMissingCodexBinaryError(error)) throw error;
+  }
+
+  const stdoutCandidate = extractHtmlCandidate(outputToText(stdout));
+  if (stdoutCandidate) return stdoutCandidate;
+
+  const stderrText = outputToText(stderr).trim();
+  const suffix = stderrText ? ` Stderr: ${truncateForError(stderrText)}` : "";
+  throw new Error(`Codex did not produce an HTML artifact.${suffix}`);
+}
+
+function outputToText(output: string | Buffer): string {
+  return Buffer.isBuffer(output) ? output.toString("utf8") : output;
+}
+
+function extractHtmlCandidate(output: string): string | null {
+  const fenced = [...output.matchAll(/```html\s*([\s\S]*?)```/gi)]
+    .map((match) => match[1]?.trim() ?? "")
+    .find(hasDocumentHtmlMarkers);
+  if (fenced) return fenced;
+
+  const styleIndex = output.search(/<style\b[^>]*data-document-to-html/i);
+  const mainIndex = output.search(/<main\b[^>]*class=["'][^"']*document-html-page/i);
+  const starts = [styleIndex, mainIndex].filter((index) => index >= 0);
+  if (starts.length === 0) return null;
+
+  return output.slice(Math.min(...starts)).trim();
+}
+
+function truncateForError(text: string): string {
+  return text.length > 500 ? `${text.slice(0, 500)}...` : text;
 }
 
 function documentToHtmlCss(): string {
@@ -335,7 +396,12 @@ function sanitizeGeneratedHtml(raw: string): string {
       .replace(/<\/?body\b[^>]*>/gi, "");
   }
 
-  return html
+  const mainEnd = html.lastIndexOf("</main>");
+  if (mainEnd >= 0) {
+    html = html.slice(0, mainEnd + "</main>".length);
+  }
+
+  const sanitized = html
     .replace(/<script\b[\s\S]*?<\/script>/gi, "")
     .replace(/<iframe\b[\s\S]*?<\/iframe>/gi, "")
     .replace(/<object\b[\s\S]*?<\/object>/gi, "")
@@ -346,6 +412,17 @@ function sanitizeGeneratedHtml(raw: string): string {
     .replace(/\s(href|src)\s*=\s*"javascript:[^"]*"/gi, ' $1="#"')
     .replace(/\s(href|src)\s*=\s*'javascript:[^']*'/gi, " $1='#'")
     .trim();
+
+  if (!hasDocumentHtmlMarkers(sanitized)) {
+    throw new Error("Codex HTML is missing document-to-html markers.");
+  }
+
+  return sanitized;
+}
+
+function hasDocumentHtmlMarkers(html: string): boolean {
+  return /<style\b[^>]*data-document-to-html/i.test(html) &&
+    /<main\b[^>]*class=["'][^"']*document-html-page/i.test(html);
 }
 
 function codexBinaryPath(): string {

@@ -71,4 +71,64 @@ describe("Codex document-to-html generation", () => {
 
     vi.unstubAllEnvs();
   });
+
+  it("recovers the HTML body from Codex stdout when the output file is missing", async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+
+    vi.doMock("node:child_process", () => ({
+      execFile: (
+        _file: string,
+        _args: string[],
+        _options: { timeout?: number },
+        callback: (error: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        callback(null, [
+          "status: complete",
+          "<style data-document-to-html>:root { --bg: #fff; }</style>",
+          "<main class=\"document-html-page wrap\"><section class=\"hero\"><h1>1Money</h1></section></main>",
+          "extra runner text",
+        ].join("\n"), "");
+      },
+    }));
+
+    const { generateDocumentHtmlBody } = await import("@/lib/codex-generator");
+    const body = await generateDocumentHtmlBody({
+      notionUrl: "https://notion.so/test",
+      markdown: "# 1Money\n\nStablecoin infrastructure.",
+    });
+
+    expect(body).toContain("data-document-to-html");
+    expect(body).toContain("document-html-page wrap");
+    expect(body).not.toContain("extra runner text");
+
+    vi.unstubAllEnvs();
+  });
+
+  it("reports a clear error when Codex completes without an HTML artifact", async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+
+    vi.doMock("node:child_process", () => ({
+      execFile: (
+        _file: string,
+        _args: string[],
+        _options: { timeout?: number },
+        callback: (error: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        callback(null, "", "finished without final message");
+      },
+    }));
+
+    const { generateDocumentHtmlBody } = await import("@/lib/codex-generator");
+
+    await expect(generateDocumentHtmlBody({
+      notionUrl: "https://notion.so/test",
+      markdown: "# 1Money",
+    })).rejects.toThrow("Codex did not produce an HTML artifact");
+
+    vi.unstubAllEnvs();
+  });
 });
