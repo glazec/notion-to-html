@@ -12,6 +12,7 @@ import type { GenerationLogEntry } from "@/lib/db";
 import { prepareSourceAssets } from "@/lib/source-assets";
 import { wrapServedHtml } from "@/lib/render-html";
 import { sha256 } from "@/lib/hash";
+import { isNotionUrl } from "@/lib/notion";
 
 export async function generatePage(pageKey: string): Promise<{
   pageKey: string;
@@ -49,8 +50,15 @@ export async function generatePage(pageKey: string): Promise<{
     await setPageGenerationProgress({
       pageKey,
       status: "generating",
-      step: "Processing images and links",
-      progress: 55,
+      step: `Firecrawl returned ${source.markdown.length} markdown chars`,
+      progress: 35,
+    });
+    const sourceStats = analyzeSourceMarkdown(source.markdown);
+    await setPageGenerationProgress({
+      pageKey,
+      status: "generating",
+      step: `Preparing source assets: ${plural(sourceStats.imageCount, "image")}, ${plural(sourceStats.notionLinkCount, "Notion link")}`,
+      progress: 50,
     });
     const preparedSource = await prepareSourceAssets({
       pageId: source.pageId,
@@ -59,8 +67,18 @@ export async function generatePage(pageKey: string): Promise<{
     await setPageGenerationProgress({
       pageKey,
       status: "generating",
-      step: "Generating document-to-html page",
-      progress: 65,
+      step: preparedSource.images.length === 0
+        ? "No source images to store"
+        : `Stored and described ${plural(preparedSource.images.length, "image")}`,
+      progress: 58,
+    });
+    await setPageGenerationProgress({
+      pageKey,
+      status: "generating",
+      step: sourceStats.notionLinkCount === 0
+        ? "No linked Notion pages found"
+        : `Preserving ${plural(sourceStats.notionLinkCount, "linked Notion page")}`,
+      progress: 62,
     });
     const documentJson = documentFromMarkdown({
       markdown: preparedSource.markdown,
@@ -69,8 +87,8 @@ export async function generatePage(pageKey: string): Promise<{
     await setPageGenerationProgress({
       pageKey,
       status: "generating",
-      step: "Rendering HTML",
-      progress: 75,
+      step: "Starting Codex document-to-html generation",
+      progress: 70,
     });
     const body = await withCodexHeartbeat(pageKey, () => generateDocumentHtmlBody({
       markdown: preparedSource.markdown,
@@ -82,7 +100,7 @@ export async function generatePage(pageKey: string): Promise<{
     await setPageGenerationProgress({
       pageKey,
       status: "generating",
-      step: "Publishing cached HTML",
+      step: "Publishing cached HTML object",
       progress: 90,
     });
     await putHtmlObject(objectKey, body);
@@ -98,6 +116,38 @@ export async function generatePage(pageKey: string): Promise<{
     await setPageStatus(pageKey, "failed", error instanceof Error ? error.message : String(error));
     throw error;
   }
+}
+
+function analyzeSourceMarkdown(markdown: string): {
+  imageCount: number;
+  notionLinkCount: number;
+} {
+  const imageUrls = new Set<string>();
+  const notionLinks = new Set<string>();
+
+  for (const match of markdown.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)) {
+    imageUrls.add(match[1]);
+  }
+
+  for (const match of markdown.matchAll(/https?:\/\/[^\s)\]]+/g)) {
+    const url = trimUrlPunctuation(match[0]);
+    if (isNotionUrl(url)) {
+      notionLinks.add(url);
+    }
+  }
+
+  return {
+    imageCount: imageUrls.size,
+    notionLinkCount: notionLinks.size,
+  };
+}
+
+function trimUrlPunctuation(value: string): string {
+  return value.replace(/[.,;:!?]+$/g, "");
+}
+
+function plural(count: number, singular: string): string {
+  return `${count} ${singular}${count === 1 ? "" : "s"}`;
 }
 
 async function withCodexHeartbeat<T>(

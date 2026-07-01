@@ -6,6 +6,7 @@ const setPageStatus = vi.fn();
 const completePageGeneration = vi.fn();
 const generateDocumentHtmlBody = vi.fn();
 const fetchPublicNotionContent = vi.fn();
+const prepareSourceAssets = vi.fn();
 const putHtmlObject = vi.fn();
 
 vi.mock("@/lib/page-store", () => ({
@@ -21,6 +22,10 @@ vi.mock("@/lib/codex-generator", () => ({
 
 vi.mock("@/lib/firecrawl", () => ({
   fetchPublicNotionContent,
+}));
+
+vi.mock("@/lib/source-assets", () => ({
+  prepareSourceAssets,
 }));
 
 vi.mock("@/lib/bucket", () => ({
@@ -49,6 +54,8 @@ describe("page generation", () => {
     completePageGeneration.mockReset();
     generateDocumentHtmlBody.mockReset();
     fetchPublicNotionContent.mockReset();
+    prepareSourceAssets.mockReset();
+    prepareSourceAssets.mockImplementation(async ({ markdown }) => ({ markdown, images: [] }));
     putHtmlObject.mockReset();
   });
 
@@ -85,6 +92,44 @@ describe("page generation", () => {
     await generation;
 
     expect(completePageGeneration).toHaveBeenCalled();
+  });
+
+  it("writes detailed logs for scrape, assets, links, Codex, and publish", async () => {
+    findPage.mockResolvedValue({
+      page_key: "abc123",
+      notion_url: "https://notion.so/test",
+    });
+    fetchPublicNotionContent.mockResolvedValue({
+      markdown: [
+        "# Hello",
+        "![Demo](https://example.com/demo.png)",
+        "[Child](https://app.notion.com/p/workspace/Child-0123456789abcdef0123456789abcdef)",
+      ].join("\n\n"),
+      url: "https://notion.so/test",
+      pageId: "page-id",
+    });
+    prepareSourceAssets.mockResolvedValue({
+      markdown: "# Hello\n\n![Demo](/assets/pages/page-id/images/demo.png)",
+      images: [{
+        alt: "Demo",
+        sourceUrl: "https://example.com/demo.png",
+        localUrl: "/assets/pages/page-id/images/demo.png",
+        objectKey: "assets/pages/page-id/images/demo.png",
+        description: "Demo screenshot",
+      }],
+    });
+    generateDocumentHtmlBody.mockResolvedValue("<main>Generated</main>");
+
+    const { generatePage } = await import("@/lib/generation");
+    await generatePage("abc123");
+
+    const steps = setPageGenerationProgress.mock.calls.map(([input]) => input.step);
+    expect(steps.some((step) => /^Firecrawl returned \d+ markdown chars$/.test(step))).toBe(true);
+    expect(steps).toContain("Preparing source assets: 1 image, 1 Notion link");
+    expect(steps).toContain("Stored and described 1 image");
+    expect(steps).toContain("Preserving 1 linked Notion page");
+    expect(steps).toContain("Starting Codex document-to-html generation");
+    expect(steps).toContain("Publishing cached HTML object");
   });
 
   it("skips stale duplicate generation events when the page is already ready", async () => {

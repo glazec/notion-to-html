@@ -83,6 +83,12 @@ describe("HTML rendering", () => {
       status: "generating",
       generationStep: "Building document JSON",
       generationProgress: 55,
+      generationLog: [{
+        at: "2026-07-01T00:10:30.000Z",
+        status: "generating",
+        step: "Firecrawl returned 120 markdown chars",
+        progress: 35,
+      }],
     });
     const html = wrapServedHtml({
       title: "Generation in flight",
@@ -98,6 +104,8 @@ describe("HTML rendering", () => {
 
     expect(html).toContain('http-equiv="refresh"');
     expect(html).toContain("Building document JSON");
+    expect(html).toContain("Firecrawl returned 120 markdown chars");
+    expect(html).toContain("nth-log-list");
     expect(html).toContain("55% complete");
     expect(html).toContain("Not generated yet");
     expect(html).not.toContain("Refreshing 55%");

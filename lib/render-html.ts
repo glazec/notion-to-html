@@ -198,6 +198,7 @@ export function progressBodyHtml(pageState: ServedPageState): string {
     <p>${escapeHtml(step)}</p>
     <div class="nth-progress" aria-label="Generation progress"><span style="width:${progress}%"></span></div>
     <p class="nth-progress-copy">${failed ? "Use regenerate to try again." : `${progress}% complete. This page refreshes every few seconds.`}</p>
+    ${generationLogHtml(pageState)}
   </section></main>`;
 }
 
@@ -227,7 +228,7 @@ function normalizedGenerationLog(pageState: ServedPageState | undefined): Genera
       typeof entry.step === "string" &&
       typeof entry.progress === "number",
     ))
-    .slice(-8);
+    .slice(-16);
 }
 
 function formatLogTime(value: string): string {
@@ -296,6 +297,7 @@ pre { overflow: auto; padding: 16px; border: 1px solid var(--line); border-radiu
 .nth-progress span { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--fg); transition: width .25s ease; }
 .nth-progress-page .nth-progress { margin-top: 24px; max-width: 520px; }
 .nth-progress-copy { font-size: 14px !important; color: var(--muted); }
+.nth-progress-page .nth-log-list { max-width: 640px; margin-top: 24px; }
 .nth-toolbar { position: fixed; right: 18px; bottom: 18px; display: flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid #d4d4d4; border-radius: 8px; background: rgba(255,255,255,.96); box-shadow: 0 12px 34px rgba(0,0,0,.14); z-index: 50; }
 .nth-freshness { height: 36px; display: inline-flex; align-items: center; padding: 0 10px; color: var(--muted); font-size: 12px; white-space: nowrap; border-right: 1px solid var(--line); }
 .nth-progress-details { position: relative; }
