@@ -31,8 +31,10 @@ export function wrapServedHtml(input: {
   regeneratePath: string;
   pageState?: ServedPageState;
 }): string {
+  const htmlLang = detectServedHtmlLang(input.title, input.body);
+
   return `<!doctype html>
-<html lang="en">
+<html lang="${htmlLang}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -46,6 +48,21 @@ ${input.body}
 ${toolbarHtml(input.notionUrl, input.regeneratePath, input.pageState)}
 </body>
 </html>`;
+}
+
+function detectServedHtmlLang(title: string, body: string): "en" | "zh-CN" {
+  const text = `${title}\n${stripHtmlForLanguageDetection(body)}`;
+  const hanCount = text.match(/\p{Script=Han}/gu)?.length ?? 0;
+  const latinCount = text.match(/[A-Za-z]/g)?.length ?? 0;
+
+  return hanCount >= 8 && hanCount >= latinCount * 0.08 ? "zh-CN" : "en";
+}
+
+function stripHtmlForLanguageDetection(value: string): string {
+  return value
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ");
 }
 
 function renderBlock(block: DocumentBlock): string {

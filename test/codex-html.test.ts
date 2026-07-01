@@ -58,6 +58,43 @@ describe("Codex document-to-html generation", () => {
     vi.unstubAllEnvs();
   });
 
+  it("tells Codex to keep Chinese source pages in Chinese", async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+
+    let prompt = "";
+    vi.doMock("node:child_process", () => ({
+      execFile: (
+        _file: string,
+        args: string[],
+        _options: { timeout?: number },
+        callback: (error: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        prompt = args.at(-1) ?? "";
+        const outputPath = args[args.indexOf("-o") + 1];
+        writeFileSync(outputPath, [
+          "<style data-document-to-html>:root { --bg: #fff; }</style>",
+          "<main class=\"document-html-page wrap\"><section class=\"hero\"><h1>硅谷与亚洲早期资本</h1></section></main>",
+        ].join("\n"));
+        callback(null, "", "");
+        return { stdin: { end: vi.fn() } };
+      },
+    }));
+
+    const { generateDocumentHtmlBody } = await import("@/lib/codex-generator");
+    await generateDocumentHtmlBody({
+      notionUrl: "https://notion.so/test",
+      markdown: "# 硅谷与亚洲早期资本\n\n早期资本正在形成哑铃结构。",
+    });
+
+    expect(prompt).toContain("Detected source language: Simplified Chinese");
+    expect(prompt).toContain("Write the generated page in Simplified Chinese");
+    expect(prompt).toContain("Do not translate Chinese source passages into English");
+
+    vi.unstubAllEnvs();
+  });
+
   it("reports a missing Codex binary when Codex credentials are configured", async () => {
     vi.resetModules();
     vi.doUnmock("node:child_process");

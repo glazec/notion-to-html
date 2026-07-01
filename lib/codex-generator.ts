@@ -194,7 +194,7 @@ async function generateHtmlWithCodex(input: {
         dir,
         "-o",
         outputPath,
-        documentToHtmlPrompt(input.notionUrl, "artifact.html"),
+        documentToHtmlPrompt(input.notionUrl, "artifact.html", input.markdown),
       ],
       {
         cwd: dir,
@@ -269,7 +269,7 @@ async function describeImageWithCodex(input: {
   }
 }
 
-function documentToHtmlPrompt(notionUrl: string, artifactFile: string): string {
+function documentToHtmlPrompt(notionUrl: string, artifactFile: string, markdown: string): string {
   return [
     "Use the document-to-html skill to convert notion.md into a polished HTML page.",
     "Source URL:",
@@ -286,12 +286,14 @@ function documentToHtmlPrompt(notionUrl: string, artifactFile: string): string {
     "- Preserve all linked Notion subpages from notion.md. Include them as source links, related pages, appendix links, or detail rows, but do not drop the connection.",
     "- Use native <details class=\"x\"> rows for depth. The page should be skimmable first and expandable second.",
     "",
+    ...documentToHtmlLanguageGuidance(markdown),
+    "",
     "Document-to-html design language:",
     "- warm paper background, terracotta accent, warm near-black ink.",
     "- Archivo-style sans stack for prose and headings, JetBrains Mono-style stack for section labels, tags, KPI values, and table heads.",
-    "- Section labels use the format 01 · THESIS, 02 · PRODUCT, 03 · TRACTION, 04 · RISKS or similar.",
+    "- Section labels use numeric prefixes. For English pages, examples include 01 · THESIS, 02 · PRODUCT, 03 · TRACTION, 04 · RISKS. For Chinese pages, use Chinese labels such as 01 · 论点, 02 · 市场, 03 · 机会, 04 · 风险.",
     "- Use 3 to 5 sections. Put surface claims in hero, KPI rows, cards, charts, or visible summaries. Put reasoning in <details class=\"x\"> bodies.",
-    "- Prefer assertion headings over labels. Example: \"Licenses are the moat\", not \"Licensing\".",
+    "- Prefer assertion headings over labels, written in the detected source language.",
     "- Use one terracotta focal element per card or chart. Do not make the whole page orange.",
     "- Cut internal notes, self-coaching, QA prompts, and sensitive deal terms unless the source clearly frames them as public-facing.",
     "",
@@ -300,6 +302,35 @@ function documentToHtmlPrompt(notionUrl: string, artifactFile: string): string {
     "",
     "Build a complete page from notion.md. If the document has quantitative content, use KPI cards, a small chart, or a table. If it has a mechanism, use a simple token-driven SVG concept diagram. Every major claim should have an expandable detail row.",
   ].join("\n");
+}
+
+function documentToHtmlLanguageGuidance(markdown: string): string[] {
+  if (detectChineseSource(markdown)) {
+    return [
+      "Language contract:",
+      "- Detected source language: Simplified Chinese.",
+      "- Write the generated page in Simplified Chinese, including prose, headings, summaries, labels, captions, details, chart text, and table framing.",
+      "- Do not translate Chinese source passages into English.",
+      "- Keep proper nouns, company names, product names, tickers, URLs, and source quotes in their original form.",
+      "- Put spaces between Chinese text and embedded English words or names.",
+    ];
+  }
+
+  return [
+    "Language contract:",
+    "- Preserve the dominant source language for generated prose, headings, summaries, labels, captions, details, chart text, and table framing.",
+    "- Keep proper nouns, company names, product names, tickers, URLs, and source quotes in their original form.",
+  ];
+}
+
+function detectChineseSource(markdown: string): boolean {
+  const text = markdown
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/https?:\/\/\S+/g, " ");
+  const hanCount = text.match(/\p{Script=Han}/gu)?.length ?? 0;
+  const latinCount = text.match(/[A-Za-z]/g)?.length ?? 0;
+
+  return hanCount >= 12 && hanCount >= latinCount * 0.12;
 }
 
 function execFileNoStdin(

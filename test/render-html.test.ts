@@ -39,6 +39,21 @@ describe("HTML rendering", () => {
     expect(html).toContain("Fresh");
   });
 
+  it("sets the served shell language to Chinese when the content is Chinese", () => {
+    const html = wrapServedHtml({
+      title: "硅谷与亚洲早期资本",
+      notionUrl: "https://notion.so/test",
+      regeneratePath: "/api/pages/abc/regenerate",
+      body: "<main><h1>硅谷与亚洲早期资本</h1><p>早期资本正在形成哑铃结构。</p></main>",
+      pageState: {
+        status: "ready",
+        generatedAt: new Date(),
+      },
+    });
+
+    expect(html).toContain('<html lang="zh-CN">');
+  });
+
   it("renders images and rewrites Notion links through the generator", () => {
     const document = documentFromMarkdown({
       notionUrl: "https://notion.so/test",
