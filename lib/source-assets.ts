@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
+import type { LookupOptions } from "node:dns";
+import { lookup } from "node:dns/promises";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, extname, join } from "node:path";
+import { Agent } from "undici";
 import { putBinaryObject } from "@/lib/bucket";
 import { describeImageAsset } from "@/lib/codex-generator";
 
@@ -17,6 +21,14 @@ type StoredImage = SourceImage & {
 };
 
 const markdownImagePattern = /!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g;
+const maxImageBytes = 5 * 1024 * 1024;
+const imageFetchTimeoutMs = 15_000;
+const maxImageRedirects = 3;
+const safeImageDispatcher = new Agent({
+  connect: {
+    lookup: safeLookup,
+  },
+});
 
 export async function prepareSourceAssets(input: {
   pageId: string;
@@ -62,13 +74,13 @@ function uniqueImages(images: SourceImage[]): SourceImage[] {
 }
 
 async function storeAndDescribeImage(pageId: string, image: SourceImage): Promise<StoredImage> {
-  const response = await fetch(image.sourceUrl);
+  const response = await fetchImage(image.sourceUrl);
   if (!response.ok) {
     throw new Error(`Image fetch failed: ${response.status} ${image.sourceUrl}`);
   }
 
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  const contentType = normalizedImageContentType(response.headers.get("content-type"), image.sourceUrl);
+  const bytes = await readImageBytes(response);
+  const contentType = detectImageContentType(bytes, response.headers.get("content-type"), image.sourceUrl);
   const objectKey = `assets/pages/${pageId}/images/${hashImage(bytes, image.sourceUrl)}${extensionForImage(contentType, image.sourceUrl)}`;
   const localUrl = `/${objectKey}`;
   await putBinaryObject(objectKey, bytes, contentType);
@@ -107,17 +119,200 @@ function appendImageDescriptions(markdown: string, images: StoredImage[]): strin
   ].join("\n\n");
 }
 
-function normalizedImageContentType(contentType: string | null, sourceUrl: string): string {
-  const value = contentType?.split(";")[0]?.trim().toLowerCase();
-  if (value?.startsWith("image/")) return value;
+async function assertAllowedImageUrl(sourceUrl: string): Promise<void> {
+  const url = new URL(sourceUrl);
+  if (url.protocol !== "https:") {
+    throw new Error("Image URL is not allowed.");
+  }
 
+  const host = normalizeUrlHostname(url.hostname);
+  if (host === "localhost" || host.endsWith(".localhost")) {
+    throw new Error("Image URL is not allowed.");
+  }
+
+  if (isIpAddressBlocked(host)) {
+    throw new Error("Image URL is not allowed.");
+  }
+
+  if (!isIP(host)) {
+    const addresses = await lookup(host, { all: true, verbatim: true });
+    if (addresses.some((address) => isIpAddressBlocked(address.address))) {
+      throw new Error("Image URL is not allowed.");
+    }
+  }
+}
+
+function normalizeUrlHostname(hostname: string): string {
+  return hostname.toLowerCase().replace(/^\[|\]$/g, "");
+}
+
+function isIpAddressBlocked(address: string): boolean {
+  const normalizedAddress = normalizeIpAddress(address);
+  const ipVersion = isIP(normalizedAddress);
+  if (ipVersion === 4) {
+    const [first, second] = normalizedAddress.split(".").map((part) => Number(part));
+    return first === 0 ||
+      first === 10 ||
+      first === 127 ||
+      first >= 224 ||
+      (first === 100 && second >= 64 && second <= 127) ||
+      (first === 169 && second === 254) ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 192 && second === 168) ||
+      (first === 192 && second === 0) ||
+      (first === 198 && (second === 18 || second === 19)) ||
+      (first === 198 && second === 51) ||
+      (first === 203 && second === 0);
+  }
+
+  if (ipVersion === 6) {
+    const value = normalizedAddress.toLowerCase();
+    return value === "::1" ||
+      value.startsWith("fc") ||
+      value.startsWith("fd") ||
+      value.startsWith("fe8") ||
+      value.startsWith("fe9") ||
+      value.startsWith("fea") ||
+      value.startsWith("feb");
+  }
+
+  return false;
+}
+
+function normalizeIpAddress(address: string): string {
+  const mappedIpv4 = address.toLowerCase().match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (mappedIpv4) return mappedIpv4[1];
+
+  const mappedIpv4Hex = address.toLowerCase().match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mappedIpv4Hex) {
+    const value = (Number.parseInt(mappedIpv4Hex[1], 16) << 16) + Number.parseInt(mappedIpv4Hex[2], 16);
+    return [
+      (value >>> 24) & 255,
+      (value >>> 16) & 255,
+      (value >>> 8) & 255,
+      value & 255,
+    ].join(".");
+  }
+
+  return address;
+}
+
+async function fetchImage(sourceUrl: string, redirectCount = 0): Promise<Response> {
+  await assertAllowedImageUrl(sourceUrl);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), imageFetchTimeoutMs);
+  try {
+    const response = await fetch(sourceUrl, {
+      signal: controller.signal,
+      redirect: "manual",
+      dispatcher: safeImageDispatcher,
+    } as RequestInit & { dispatcher: Agent });
+
+    if (isRedirect(response.status)) {
+      if (redirectCount >= maxImageRedirects) {
+        throw new Error("Image redirect limit exceeded.");
+      }
+
+      const location = response.headers.get("location");
+      if (!location) {
+        throw new Error(`Image redirect missing location: ${sourceUrl}`);
+      }
+
+      return fetchImage(new URL(location, sourceUrl).toString(), redirectCount + 1);
+    }
+
+    return response;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function isRedirect(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
+function safeLookup(
+  hostname: string,
+  options: LookupOptions,
+  callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void,
+): void {
+  void lookup(hostname, { ...options, all: true, verbatim: true })
+    .then((addresses) => {
+      if (addresses.some((address) => isIpAddressBlocked(address.address))) {
+        callback(new Error("Image URL is not allowed."), "", 0);
+        return;
+      }
+
+      const first = addresses[0];
+      if (!first) {
+        callback(new Error("Image host did not resolve."), "", 0);
+        return;
+      }
+
+      callback(null, first.address, first.family);
+    })
+    .catch((error: unknown) => callback(error instanceof Error ? error : new Error(String(error)), "", 0));
+}
+
+async function readImageBytes(response: Response): Promise<Uint8Array> {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxImageBytes) {
+    throw new Error("Image is too large.");
+  }
+
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length > maxImageBytes) throw new Error("Image is too large.");
+    return bytes;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > maxImageBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error("Image is too large.");
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  return bytes;
+}
+
+function detectImageContentType(bytes: Uint8Array, contentType: string | null, sourceUrl: string): string {
+  const value = contentType?.split(";")[0]?.trim().toLowerCase();
   const extension = extname(new URL(sourceUrl).pathname).toLowerCase();
-  if (extension === ".png") return "image/png";
-  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
-  if (extension === ".gif") return "image/gif";
-  if (extension === ".webp") return "image/webp";
-  if (extension === ".svg") return "image/svg+xml";
-  return "image/png";
+
+  if (value === "image/svg+xml" || extension === ".svg") {
+    throw new Error("Unsupported image type.");
+  }
+
+  if (hasPrefix(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
+  if (hasPrefix(bytes, [0xff, 0xd8, 0xff])) return "image/jpeg";
+  if (ascii(bytes, 0, 6) === "GIF87a" || ascii(bytes, 0, 6) === "GIF89a") return "image/gif";
+  if (ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 12) === "WEBP") return "image/webp";
+
+  throw new Error("Unsupported image type.");
+}
+
+function hasPrefix(bytes: Uint8Array, prefix: number[]): boolean {
+  return prefix.every((byte, index) => bytes[index] === byte);
+}
+
+function ascii(bytes: Uint8Array, start: number, end: number): string {
+  return String.fromCharCode(...bytes.slice(start, end));
 }
 
 function extensionForImage(contentType: string, sourceUrl: string): string {
@@ -125,7 +320,6 @@ function extensionForImage(contentType: string, sourceUrl: string): string {
   if (contentType === "image/jpeg") return ".jpg";
   if (contentType === "image/gif") return ".gif";
   if (contentType === "image/webp") return ".webp";
-  if (contentType === "image/svg+xml") return ".svg";
 
   const extension = extname(new URL(sourceUrl).pathname).toLowerCase();
   return extension || ".png";

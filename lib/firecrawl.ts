@@ -33,7 +33,7 @@ export async function fetchPublicNotionContent(notionUrl: string): Promise<Firec
     },
     body: JSON.stringify({
       url: notionUrl,
-      formats: ["markdown", "links"],
+      formats: ["markdown", "links", "images"],
       onlyMainContent: true,
       waitFor: 1000,
     }),
@@ -50,11 +50,26 @@ export async function fetchPublicNotionContent(notionUrl: string): Promise<Firec
     throw new Error("Firecrawl scrape response did not include markdown.");
   }
 
+  if (isNotionSignInPage(markdown)) {
+    throw new Error("Firecrawl returned a Notion sign-in page instead of page content.");
+  }
+
   return {
     pageId,
     url: payload.data?.metadata?.sourceURL ?? notionUrl,
     markdown: enrichMarkdown(markdown, payload.data?.links ?? [], payload.data?.images ?? []),
   };
+}
+
+function isNotionSignInPage(markdown: string): boolean {
+  const normalized = markdown.toLowerCase();
+  return normalized.includes("sign in to see this page") ||
+    (
+      normalized.includes("you’re almost there") &&
+      normalized.includes("email") &&
+      normalized.includes("continue") &&
+      normalized.includes("new user?")
+    );
 }
 
 function enrichMarkdown(

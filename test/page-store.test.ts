@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { query } from "@/lib/db";
 import {
+  completePageGeneration,
+  InvalidNotionUrlError,
   listRecentPages,
   setPageGenerationProgress,
   setPageStatus,
@@ -48,6 +50,18 @@ describe("page store", () => {
     );
 
     expect(vi.mocked(query).mock.calls[0][1]?.[4]).toBe(true);
+  });
+
+  it("rejects non Notion hosts before inserting a page", async () => {
+    await expect(upsertPageFromNotionUrl(
+      "https://evil.example/Test-0123456789abcdef0123456789abcdef",
+    )).rejects.toBeInstanceOf(InvalidNotionUrlError);
+
+    await expect(upsertPageFromNotionUrl(
+      "0123456789abcdef0123456789abcdef",
+    )).rejects.toBeInstanceOf(InvalidNotionUrlError);
+
+    expect(vi.mocked(query)).not.toHaveBeenCalled();
   });
 
   it("appends generation progress to the persisted page log", async () => {
@@ -138,6 +152,37 @@ describe("page store", () => {
     expect(String(values[2])).not.toContain("postgresql://");
     expect(String(values[2])).not.toContain("password");
     expect(JSON.stringify(logEntry)).not.toContain("ntn_");
+  });
+
+  it("keeps pages queued when they were marked dirty after generation started", async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([pageRecord({
+        status: "queued",
+        dirty_at: new Date("2026-07-01T00:01:00.000Z"),
+      })]);
+
+    const generationStartedAt = new Date("2026-07-01T00:00:00.000Z");
+    await completePageGeneration({
+      pageKey: "0123456789abcd",
+      contentHash: "hash",
+      objectKey: "pages/1/index.html",
+      documentJson: {
+        schema_version: 1,
+        title: "Test",
+        notionUrl: "https://notion.so/test",
+        theme: "light",
+        sections: [{ type: "hero", heading: "Test", blocks: [] }],
+      },
+      generationStartedAt,
+    });
+
+    const updateSql = vi.mocked(query).mock.calls[1][0];
+    const values = vi.mocked(query).mock.calls[1][1] ?? [];
+    expect(updateSql).toContain("dirty_at > $4");
+    expect(updateSql).toContain("status = case");
+    expect(updateSql).toContain("dirty_at = case");
+    expect(values[3]).toBe(generationStartedAt);
   });
 });
 

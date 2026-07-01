@@ -1,7 +1,7 @@
 import type { DocumentHtmlJson } from "@/lib/document";
 import type { GenerationLogEntry, PageRecord, PageStatus } from "@/lib/db";
 import { query } from "@/lib/db";
-import { parseNotionPageId, slugFromNotionUrl } from "@/lib/notion";
+import { isNotionUrl, parseNotionPageId, slugFromNotionUrl } from "@/lib/notion";
 
 const maxGenerationLogEntries = 40;
 const redactedText = "[redacted]";
@@ -11,11 +11,32 @@ export function pageKeyFromPageId(pageId: string): string {
   return pageId.replaceAll("-", "").slice(0, 14);
 }
 
+export class InvalidNotionUrlError extends Error {
+  constructor(message = "A valid Notion page URL is required.") {
+    super(message);
+    this.name = "InvalidNotionUrlError";
+  }
+}
+
+export function isInvalidNotionUrlError(error: unknown): error is InvalidNotionUrlError {
+  return error instanceof InvalidNotionUrlError;
+}
+
 export async function upsertPageFromNotionUrl(
   notionUrl: string,
   options: { userTransformed?: boolean } = {},
 ): Promise<PageRecord> {
-  const notionPageId = parseNotionPageId(notionUrl);
+  if (!isNotionUrl(notionUrl)) {
+    throw new InvalidNotionUrlError();
+  }
+
+  let notionPageId: string;
+  try {
+    notionPageId = parseNotionPageId(notionUrl);
+  } catch {
+    throw new InvalidNotionUrlError();
+  }
+
   const pageKey = pageKeyFromPageId(notionPageId);
   const slug = slugFromNotionUrl(notionUrl);
   const userTransformed = options.userTransformed === true;
@@ -192,6 +213,7 @@ export async function completePageGeneration(input: {
   contentHash: string;
   objectKey: string;
   documentJson: DocumentHtmlJson;
+  generationStartedAt: Date;
 }): Promise<PageRecord> {
   await query(
     `
@@ -211,11 +233,23 @@ export async function completePageGeneration(input: {
     `
       update pages
       set current_hash = $2,
-          status = 'ready',
-          dirty_at = null,
+          status = case
+            when dirty_at is not null and dirty_at > $4 then 'queued'
+            else 'ready'
+          end,
+          dirty_at = case
+            when dirty_at is not null and dirty_at > $4 then dirty_at
+            else null
+          end,
           last_generated_at = now(),
-          generation_step = 'Ready',
-          generation_progress = 100,
+          generation_step = case
+            when dirty_at is not null and dirty_at > $4 then 'Queued for regeneration'
+            else 'Ready'
+          end,
+          generation_progress = case
+            when dirty_at is not null and dirty_at > $4 then 0
+            else 100
+          end,
           generation_log = ${appendGenerationLogSql("$3::jsonb")},
           last_error = null,
           updated_at = now()
@@ -226,6 +260,7 @@ export async function completePageGeneration(input: {
       input.pageKey,
       input.contentHash,
       JSON.stringify(generationLogEntry("ready", "Published cached HTML", 100)),
+      input.generationStartedAt,
     ],
   );
 

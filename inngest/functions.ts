@@ -1,5 +1,6 @@
 import { generatePage } from "@/lib/generation";
 import { findPage } from "@/lib/page-store";
+import { notionEditIdleSleep } from "@/lib/regeneration-policy";
 import { inngest, events } from "@/inngest/client";
 
 export const generatePageFunction = inngest.createFunction(
@@ -32,7 +33,7 @@ export const regenerateWhenIdleFunction = inngest.createFunction(
     const pageKey = String(event.data.pageKey);
     const dirtyAt = String(event.data.dirtyAt);
 
-    await step.sleep("wait-for-edit-idle", "20m");
+    await step.sleep("wait-for-edit-idle", notionEditIdleSleep);
 
     const shouldRegenerate = await step.run("check-stale-edit", async () => {
       const page = await findPage(pageKey);

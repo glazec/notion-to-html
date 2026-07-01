@@ -6,14 +6,18 @@ describe("Codex document-to-html generation", () => {
     vi.resetModules();
     vi.unstubAllEnvs();
     vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+    vi.stubEnv("DATABASE_URL", "postgres://user:password@example.com/app");
+    vi.stubEnv("FIRECRAWL_API_KEY", "fc-secret");
+    vi.stubEnv("NOTION_API_KEY", "ntn-secret");
+    vi.stubEnv("SECRET_ACCESS_KEY", "bucket-secret");
 
-    const calls: Array<{ args: string[]; options: { timeout?: number } }> = [];
+    const calls: Array<{ args: string[]; options: { timeout?: number; env?: NodeJS.ProcessEnv } }> = [];
     const endStdin = vi.fn();
     vi.doMock("node:child_process", () => ({
       execFile: (
         _file: string,
         args: string[],
-        options: { timeout?: number },
+        options: { timeout?: number; env?: NodeJS.ProcessEnv },
         callback: (error: Error | null, stdout?: string, stderr?: string) => void,
       ) => {
         calls.push({ args, options });
@@ -48,12 +52,67 @@ describe("Codex document-to-html generation", () => {
     expect(prompt).toContain("terracotta");
     expect(prompt).toContain("details class=\"x\"");
     expect(calls[0].options.timeout).toBeGreaterThanOrEqual(10 * 60 * 1000);
+    expect(calls[0].options.env?.CODEX_ACCESS_TOKEN).toBe("token");
+    expect(calls[0].options.env?.CODEX_HOME).toContain("notion-to-html-codex-");
+    expect(calls[0].options.env?.HOME).toBe(calls[0].options.env?.CODEX_HOME);
+    expect(calls[0].options.env?.HOME).not.toBe(process.env.HOME);
+    expect(calls[0].options.env?.DATABASE_URL).toBeUndefined();
+    expect(calls[0].options.env?.FIRECRAWL_API_KEY).toBeUndefined();
+    expect(calls[0].options.env?.NOTION_API_KEY).toBeUndefined();
+    expect(calls[0].options.env?.SECRET_ACCESS_KEY).toBeUndefined();
     expect(body).toContain("data-document-to-html");
     expect(body).toContain("document-html-page wrap");
     expect(body).toContain("<details class=\"x\">");
     expect(body).not.toContain("<script");
     expect(body).not.toContain("```");
     expect(endStdin).toHaveBeenCalledOnce();
+
+    vi.unstubAllEnvs();
+  });
+
+  it("removes encoded script URLs and SVG payloads from Codex HTML", async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+
+    vi.doMock("node:child_process", () => ({
+      execFile: (
+        _file: string,
+        args: string[],
+        _options: { timeout?: number },
+        callback: (error: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        const outputPath = args[args.indexOf("-o") + 1];
+        writeFileSync(outputPath, [
+          "<style data-document-to-html>",
+          ":root { --bg: #fff; }",
+          ".x { background-image: url(javascript:alert(1)); color: red; }",
+          "</style>",
+          "<main class=\"document-html-page wrap\">",
+          "<a href=\"java&#115;cript:alert(1)\" onclick=\"bad()\">Bad link</a>",
+          "<img src=\"/assets/pages/page-id/images/demo.png\" onerror=\"bad()\" alt=\"Demo\">",
+          "<svg onload=\"bad()\"><script>alert(1)</script></svg>",
+          "</main>",
+        ].join("\n"));
+        callback(null, "", "");
+        return { stdin: { end: vi.fn() } };
+      },
+    }));
+
+    const { generateDocumentHtmlBody } = await import("@/lib/codex-generator");
+    const body = await generateDocumentHtmlBody({
+      notionUrl: "https://notion.so/test",
+      markdown: "# 1Money\n\n![Demo](/assets/pages/page-id/images/demo.png)",
+    });
+
+    expect(body).toContain("document-html-page wrap");
+    expect(body).toContain("<img");
+    expect(body).not.toContain("java&#115;cript");
+    expect(body).not.toContain("javascript:");
+    expect(body).not.toContain("onclick");
+    expect(body).not.toContain("onerror");
+    expect(body).not.toContain("<svg");
+    expect(body).not.toContain("<script");
 
     vi.unstubAllEnvs();
   });
@@ -91,6 +150,86 @@ describe("Codex document-to-html generation", () => {
     expect(prompt).toContain("Detected source language: Simplified Chinese");
     expect(prompt).toContain("Write the generated page in Simplified Chinese");
     expect(prompt).toContain("Do not translate Chinese source passages into English");
+
+    vi.unstubAllEnvs();
+  });
+
+  it("does not force Chinese when mixed source has only 20 percent or less Chinese text", async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+
+    let prompt = "";
+    vi.doMock("node:child_process", () => ({
+      execFile: (
+        _file: string,
+        args: string[],
+        _options: { timeout?: number },
+        callback: (error: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        prompt = args.at(-1) ?? "";
+        const outputPath = args[args.indexOf("-o") + 1];
+        writeFileSync(outputPath, [
+          "<style data-document-to-html>:root { --bg: #fff; }</style>",
+          "<main class=\"document-html-page wrap\"><section class=\"hero\"><h1>Mixed RWA note</h1></section></main>",
+        ].join("\n"));
+        callback(null, "", "");
+        return { stdin: { end: vi.fn() } };
+      },
+    }));
+
+    const { generateDocumentHtmlBody } = await import("@/lib/codex-generator");
+    await generateDocumentHtmlBody({
+      notionUrl: "https://notion.so/test",
+      markdown: [
+        "# Mixed RWA note",
+        "资产质量分发渠道市场机会风险高",
+        "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+      ].join("\n\n"),
+    });
+
+    expect(prompt).not.toContain("Detected source language: Simplified Chinese");
+    expect(prompt).toContain("Preserve the dominant source language");
+
+    vi.unstubAllEnvs();
+  });
+
+  it("forces Chinese when mixed source has more than 20 percent Chinese text", async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+
+    let prompt = "";
+    vi.doMock("node:child_process", () => ({
+      execFile: (
+        _file: string,
+        args: string[],
+        _options: { timeout?: number },
+        callback: (error: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        prompt = args.at(-1) ?? "";
+        const outputPath = args[args.indexOf("-o") + 1];
+        writeFileSync(outputPath, [
+          "<style data-document-to-html>:root { --bg: #fff; }</style>",
+          "<main class=\"document-html-page wrap\"><section class=\"hero\"><h1>RWA 中文笔记</h1></section></main>",
+        ].join("\n"));
+        callback(null, "", "");
+        return { stdin: { end: vi.fn() } };
+      },
+    }));
+
+    const { generateDocumentHtmlBody } = await import("@/lib/codex-generator");
+    await generateDocumentHtmlBody({
+      notionUrl: "https://notion.so/test",
+      markdown: [
+        "# RWA 中文笔记",
+        "资产质量分发渠道市场机会风险高收益合规流动性",
+        "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+      ].join("\n\n"),
+    });
+
+    expect(prompt).toContain("Detected source language: Simplified Chinese");
+    expect(prompt).toContain("Write the generated page in Simplified Chinese");
 
     vi.unstubAllEnvs();
   });

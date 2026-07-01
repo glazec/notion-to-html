@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { events, inngest } from "@/inngest/client";
 import { appUrl } from "@/lib/env";
 import { isMissingEnvError, missingConfigResponse } from "@/lib/http-errors";
+import { checkInitialGenerationRateLimit } from "@/lib/initial-generation-rate-limit";
 import { notionUrlFromPathSegments } from "@/lib/notion";
 import { findPageBySlug, upsertPageFromNotionUrl } from "@/lib/page-store";
 import { servedPageResponse } from "@/lib/page-response";
@@ -16,7 +17,7 @@ export async function GET(
   const notionUrl = notionUrlFromPathSegments(pagePath);
 
   if (notionUrl) {
-    return pastedNotionUrlRedirect(notionUrl);
+    return pastedNotionUrlRedirect(request, notionUrl);
   }
 
   const pageSlug = decodeURIComponent(pagePath.join("/"));
@@ -38,7 +39,11 @@ export async function GET(
   return servedPageResponse(page, request.url);
 }
 
-async function pastedNotionUrlRedirect(notionUrl: string): Promise<Response> {
+async function pastedNotionUrlRedirect(request: Request, notionUrl: string): Promise<Response> {
+  if (!checkInitialGenerationRateLimit(request)) {
+    return NextResponse.json({ error: "Initial generation rate limit exceeded" }, { status: 429 });
+  }
+
   let page;
 
   try {

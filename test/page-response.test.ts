@@ -72,4 +72,60 @@ describe("served page response", () => {
     expect(send).not.toHaveBeenCalled();
     expect(setPageGenerationProgress).not.toHaveBeenCalled();
   });
+
+  it("does not regenerate dirty pages before the Notion edit idle window", async () => {
+    const { servedPageResponse } = await import("@/lib/page-response");
+    const response = await servedPageResponse(
+      page({
+        status: "queued",
+        dirty_at: new Date(Date.now() - 2 * 60 * 1000),
+        updated_at: new Date(Date.now() - 2 * 60 * 1000),
+      }),
+      "https://notion-to-html-production.up.railway.app/p/37cf0ada243c81",
+    );
+
+    expect(response.status).toBe(200);
+    expect(send).not.toHaveBeenCalled();
+    expect(setPageGenerationProgress).not.toHaveBeenCalled();
+  });
+
+  it("recovers cached dirty pages after the Notion edit idle window", async () => {
+    setPageGenerationProgress.mockResolvedValue(page({
+      status: "generating",
+      generation_step: "Waiting for generator",
+      generation_progress: 5,
+    }));
+
+    const { servedPageResponse } = await import("@/lib/page-response");
+    const response = await servedPageResponse(
+      page({
+        status: "queued",
+        dirty_at: new Date(Date.now() - 21 * 60 * 1000),
+        updated_at: new Date(Date.now() - 21 * 60 * 1000),
+      }),
+      "https://notion-to-html-production.up.railway.app/p/37cf0ada243c81",
+    );
+
+    expect(response.status).toBe(200);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      name: "page/generate",
+      data: expect.objectContaining({ pageKey: "37cf0ada243c81" }),
+    }));
+    expect(setPageGenerationProgress).toHaveBeenCalledWith(expect.objectContaining({
+      pageKey: "37cf0ada243c81",
+      status: "generating",
+      step: "Waiting for generator",
+    }));
+  });
+
+  it("serves HTML with a restrictive content security policy", async () => {
+    const { htmlResponse } = await import("@/lib/page-response");
+    const response = htmlResponse("<main>ok</main>");
+    const csp = response.headers.get("content-security-policy") ?? "";
+
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+  });
 });

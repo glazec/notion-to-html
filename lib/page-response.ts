@@ -2,6 +2,7 @@ import { events, inngest } from "@/inngest/client";
 import type { PageRecord } from "@/lib/db";
 import { buildServedHtml } from "@/lib/generation";
 import { getCurrentVersion, setPageGenerationProgress } from "@/lib/page-store";
+import { notionEditIdleMs } from "@/lib/regeneration-policy";
 import { progressBodyHtml, wrapServedHtml } from "@/lib/render-html";
 
 const queuedRecoveryMs = 60 * 1000;
@@ -57,7 +58,10 @@ export async function servedPageResponse(page: PageRecord, requestUrl: string): 
 
 function shouldStartGeneration(page: PageRecord): boolean {
   if (page.status === "queued") {
-    if (page.current_hash || page.dirty_at) return false;
+    if (page.dirty_at) {
+      return Date.now() - page.dirty_at.getTime() > notionEditIdleMs;
+    }
+
     return Date.now() - page.updated_at.getTime() > queuedRecoveryMs;
   }
 
@@ -96,6 +100,17 @@ export function htmlResponse(html: string, status = 200): Response {
       "Cache-Control": status === 200
         ? "public, max-age=300, stale-while-revalidate=86400"
         : "no-store",
+      "Content-Security-Policy": [
+        "default-src 'none'",
+        "script-src 'self' 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' https: data:",
+        "connect-src 'self'",
+        "form-action 'self'",
+        "base-uri 'none'",
+        "object-src 'none'",
+        "frame-ancestors 'none'",
+      ].join("; "),
     },
   });
 }

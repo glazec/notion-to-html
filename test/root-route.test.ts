@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resetRateLimitsForTests } from "@/lib/rate-limit";
 
 const send = vi.fn();
 const upsertPageFromNotionUrl = vi.fn();
@@ -24,6 +25,7 @@ describe("root path route", () => {
     vi.resetModules();
     vi.unstubAllEnvs();
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://notion-to-html.test");
+    resetRateLimitsForTests();
     send.mockReset();
     upsertPageFromNotionUrl.mockReset();
     findPageBySlug.mockReset();
@@ -88,4 +90,37 @@ describe("root path route", () => {
       expect(response.headers.get("location")).toBe(`https://notion-to-html.test/${testCase.slug}`);
     }
   });
+
+  it("rate limits pasted URL path generation before creating more jobs", async () => {
+    const { GET } = await import("@/app/[...pagePath]/route");
+    upsertPageFromNotionUrl.mockResolvedValue({
+      page_key: "37cf0ada243c81",
+      slug: "1Money-6-11-2026-EN",
+    });
+    const pagePath = [
+      "https:",
+      "app.notion.com",
+      "p",
+      "iosgvc",
+      "1Money-6-11-2026-EN-37cf0ada243c81279b43e3a1603c6a43",
+    ];
+
+    for (let index = 0; index < 20; index += 1) {
+      const response = await GET(pathRequest("203.0.113.51"), { params: Promise.resolve({ pagePath }) });
+      expect(response.status).toBe(303);
+    }
+
+    const denied = await GET(pathRequest("203.0.113.51"), { params: Promise.resolve({ pagePath }) });
+
+    expect(denied.status).toBe(429);
+    expect(await denied.json()).toEqual({ error: "Initial generation rate limit exceeded" });
+    expect(upsertPageFromNotionUrl).toHaveBeenCalledTimes(20);
+    expect(send).toHaveBeenCalledTimes(20);
+  });
 });
+
+function pathRequest(ip: string): Request {
+  return new Request("https://notion-to-html.test/https:/app.notion.com/p/iosgvc/1Money-6-11-2026-EN-37cf0ada243c81279b43e3a1603c6a43", {
+    headers: { "x-forwarded-for": ip },
+  });
+}

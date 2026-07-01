@@ -6,7 +6,7 @@ import {
   setPageStatus,
 } from "@/lib/page-store";
 import { generateDocumentHtmlBody } from "@/lib/codex-generator";
-import { fetchPublicNotionContent } from "@/lib/firecrawl";
+import { fetchSourceContent } from "@/lib/content-source";
 import { documentFromMarkdown } from "@/lib/document";
 import type { GenerationLogEntry } from "@/lib/db";
 import { prepareSourceAssets } from "@/lib/source-assets";
@@ -32,6 +32,8 @@ export async function generatePage(pageKey: string): Promise<{
     return { pageKey, skipped: true, reason: "already-ready" };
   }
 
+  const generationStartedAt = new Date();
+
   await setPageGenerationProgress({
     pageKey,
     status: "generating",
@@ -43,16 +45,24 @@ export async function generatePage(pageKey: string): Promise<{
     await setPageGenerationProgress({
       pageKey,
       status: "generating",
-      step: "Crawling public Notion page",
+      step: "Fetching Notion content source",
       progress: 25,
     });
-    const source = await fetchPublicNotionContent(page.notion_url);
+    const source = await fetchSourceContent(page.notion_url);
     await setPageGenerationProgress({
       pageKey,
       status: "generating",
-      step: `Firecrawl returned ${source.markdown.length} markdown chars`,
+      step: `${source.sourceName} returned ${source.markdown.length} markdown chars`,
       progress: 35,
     });
+    if (source.warning) {
+      await setPageGenerationProgress({
+        pageKey,
+        status: "generating",
+        step: source.warning,
+        progress: 38,
+      });
+    }
     const sourceStats = analyzeSourceMarkdown(source.markdown);
     await setPageGenerationProgress({
       pageKey,
@@ -80,6 +90,14 @@ export async function generatePage(pageKey: string): Promise<{
         : `Preserving ${plural(sourceStats.notionLinkCount, "linked Notion page")}`,
       progress: 62,
     });
+    await setPageGenerationProgress({
+      pageKey,
+      status: "generating",
+      step: source.commentCount === 0
+        ? "No Notion comments found"
+        : `Included ${plural(source.commentCount, "Notion comment")} from ${plural(source.discussionCount, "discussion")}`,
+      progress: 66,
+    });
     const documentJson = documentFromMarkdown({
       markdown: preparedSource.markdown,
       notionUrl: source.url,
@@ -87,13 +105,22 @@ export async function generatePage(pageKey: string): Promise<{
     await setPageGenerationProgress({
       pageKey,
       status: "generating",
-      step: "Starting Codex document-to-html generation",
+      step: `Starting Codex document-to-html generation: ${plural(preparedSource.images.length, "image")}, ${plural(sourceStats.notionLinkCount, "Notion link")}`,
       progress: 70,
     });
-    const body = await withCodexHeartbeat(pageKey, () => generateDocumentHtmlBody({
-      markdown: preparedSource.markdown,
-      notionUrl: source.url,
-    }));
+    const body = await withCodexHeartbeat(
+      pageKey,
+      {
+        markdownChars: preparedSource.markdown.length,
+        imageCount: preparedSource.images.length,
+        notionLinkCount: sourceStats.notionLinkCount,
+        commentCount: source.commentCount,
+      },
+      () => generateDocumentHtmlBody({
+        markdown: preparedSource.markdown,
+        notionUrl: source.url,
+      }),
+    );
     const contentHash = sha256(body);
     const objectKey = `pages/${source.pageId}/${contentHash}/index.html`;
 
@@ -109,6 +136,7 @@ export async function generatePage(pageKey: string): Promise<{
       contentHash,
       objectKey,
       documentJson,
+      generationStartedAt,
     });
 
     return { pageKey, contentHash, objectKey };
@@ -152,6 +180,12 @@ function plural(count: number, singular: string): string {
 
 async function withCodexHeartbeat<T>(
   pageKey: string,
+  context: {
+    markdownChars: number;
+    imageCount: number;
+    notionLinkCount: number;
+    commentCount: number;
+  },
   work: () => Promise<T>,
 ): Promise<T> {
   let minutes = 0;
@@ -160,7 +194,7 @@ async function withCodexHeartbeat<T>(
     void setPageGenerationProgress({
       pageKey,
       status: "generating",
-      step: `Codex generation still running (${minutes}m)`,
+      step: `Codex still running: ${context.markdownChars} chars, ${plural(context.imageCount, "image")}, ${plural(context.notionLinkCount, "Notion link")}, ${plural(context.commentCount, "comment")} (${minutes}m)`,
       progress: Math.min(88, 75 + minutes),
     });
   }, 60 * 1000);

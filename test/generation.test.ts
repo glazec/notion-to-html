@@ -5,7 +5,7 @@ const setPageGenerationProgress = vi.fn();
 const setPageStatus = vi.fn();
 const completePageGeneration = vi.fn();
 const generateDocumentHtmlBody = vi.fn();
-const fetchPublicNotionContent = vi.fn();
+const fetchSourceContent = vi.fn();
 const prepareSourceAssets = vi.fn();
 const putHtmlObject = vi.fn();
 
@@ -20,8 +20,8 @@ vi.mock("@/lib/codex-generator", () => ({
   generateDocumentHtmlBody,
 }));
 
-vi.mock("@/lib/firecrawl", () => ({
-  fetchPublicNotionContent,
+vi.mock("@/lib/content-source", () => ({
+  fetchSourceContent,
 }));
 
 vi.mock("@/lib/source-assets", () => ({
@@ -53,7 +53,7 @@ describe("page generation", () => {
     setPageStatus.mockReset();
     completePageGeneration.mockReset();
     generateDocumentHtmlBody.mockReset();
-    fetchPublicNotionContent.mockReset();
+    fetchSourceContent.mockReset();
     prepareSourceAssets.mockReset();
     prepareSourceAssets.mockImplementation(async ({ markdown }) => ({ markdown, images: [] }));
     putHtmlObject.mockReset();
@@ -65,10 +65,13 @@ describe("page generation", () => {
       page_key: "abc123",
       notion_url: "https://notion.so/test",
     });
-    fetchPublicNotionContent.mockResolvedValue({
+    fetchSourceContent.mockResolvedValue({
       markdown: "# Hello\n\nBody",
       url: "https://notion.so/test",
       pageId: "page-id",
+      sourceName: "Notion API",
+      commentCount: 0,
+      discussionCount: 0,
     });
     generateDocumentHtmlBody.mockReturnValue(html.promise);
 
@@ -84,7 +87,7 @@ describe("page generation", () => {
     expect(setPageGenerationProgress).toHaveBeenCalledWith(expect.objectContaining({
       pageKey: "abc123",
       status: "generating",
-      step: "Codex generation still running (2m)",
+      step: "Codex still running: 13 chars, 0 images, 0 Notion links, 0 comments (2m)",
       progress: 77,
     }));
 
@@ -99,7 +102,7 @@ describe("page generation", () => {
       page_key: "abc123",
       notion_url: "https://notion.so/test",
     });
-    fetchPublicNotionContent.mockResolvedValue({
+    fetchSourceContent.mockResolvedValue({
       markdown: [
         "# Hello",
         "![Demo](https://example.com/demo.png)",
@@ -107,6 +110,9 @@ describe("page generation", () => {
       ].join("\n\n"),
       url: "https://notion.so/test",
       pageId: "page-id",
+      sourceName: "Notion API",
+      commentCount: 2,
+      discussionCount: 1,
     });
     prepareSourceAssets.mockResolvedValue({
       markdown: "# Hello\n\n![Demo](/assets/pages/page-id/images/demo.png)",
@@ -124,12 +130,32 @@ describe("page generation", () => {
     await generatePage("abc123");
 
     const steps = setPageGenerationProgress.mock.calls.map(([input]) => input.step);
-    expect(steps.some((step) => /^Firecrawl returned \d+ markdown chars$/.test(step))).toBe(true);
+    expect(steps).toContain("Fetching Notion content source");
+    expect(steps.some((step) => /^Notion API returned \d+ markdown chars$/.test(step))).toBe(true);
     expect(steps).toContain("Preparing source assets: 1 image, 1 Notion link");
     expect(steps).toContain("Stored and described 1 image");
     expect(steps).toContain("Preserving 1 linked Notion page");
-    expect(steps).toContain("Starting Codex document-to-html generation");
+    expect(steps).toContain("Included 2 Notion comments from 1 discussion");
+    expect(steps).toContain("Starting Codex document-to-html generation: 1 image, 1 Notion link");
     expect(steps).toContain("Publishing cached HTML object");
+  });
+
+  it("does not publish HTML when the Notion source is inaccessible", async () => {
+    const accessMessage = "Notion page is not accessible. No website was generated. To fix it: open the page in Notion, click Share, publish it to web, or share it with the configured Notion integration and ensure the page id is in NOTION_PUBLIC_NOTION_API_PAGE_ALLOWLIST. Then regenerate.";
+    findPage.mockResolvedValue({
+      page_key: "abc123",
+      notion_url: "https://notion.so/test",
+    });
+    fetchSourceContent.mockRejectedValue(new Error(accessMessage));
+
+    const { generatePage } = await import("@/lib/generation");
+    await expect(generatePage("abc123")).rejects.toThrow(accessMessage);
+
+    expect(setPageStatus).toHaveBeenCalledWith("abc123", "failed", accessMessage);
+    expect(prepareSourceAssets).not.toHaveBeenCalled();
+    expect(generateDocumentHtmlBody).not.toHaveBeenCalled();
+    expect(putHtmlObject).not.toHaveBeenCalled();
+    expect(completePageGeneration).not.toHaveBeenCalled();
   });
 
   it("skips stale duplicate generation events when the page is already ready", async () => {
@@ -149,7 +175,7 @@ describe("page generation", () => {
       skipped: true,
       reason: "already-ready",
     });
-    expect(fetchPublicNotionContent).not.toHaveBeenCalled();
+    expect(fetchSourceContent).not.toHaveBeenCalled();
     expect(generateDocumentHtmlBody).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@ import { execFile, type ExecFileOptions } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import sanitizeHtml from "sanitize-html";
 import { documentFromMarkdown, parseDocumentJson, type DocumentHtmlJson } from "@/lib/document";
 import { optionalEnv } from "@/lib/env";
 import { preserveGeneratedConnections } from "@/lib/generated-connections";
@@ -155,10 +156,7 @@ async function generateWithCodex(input: {
         cwd: dir,
         timeout: 180_000,
         maxBuffer: 10 * 1024 * 1024,
-        env: {
-          ...process.env,
-          ...authEnv,
-        },
+        env: codexProcessEnv(authEnv),
       },
     );
 
@@ -200,10 +198,7 @@ async function generateHtmlWithCodex(input: {
         cwd: dir,
         timeout: 12 * 60_000,
         maxBuffer: 20 * 1024 * 1024,
-        env: {
-          ...process.env,
-          ...authEnv,
-        },
+        env: codexProcessEnv(authEnv),
       },
     );
 
@@ -250,10 +245,7 @@ async function describeImageWithCodex(input: {
         cwd: dir,
         timeout: 120_000,
         maxBuffer: 4 * 1024 * 1024,
-        env: {
-          ...process.env,
-          ...authEnv,
-        },
+        env: codexProcessEnv(authEnv),
       },
     );
 
@@ -329,8 +321,9 @@ function detectChineseSource(markdown: string): boolean {
     .replace(/https?:\/\/\S+/g, " ");
   const hanCount = text.match(/\p{Script=Han}/gu)?.length ?? 0;
   const latinCount = text.match(/[A-Za-z]/g)?.length ?? 0;
+  const languageCharCount = hanCount + latinCount;
 
-  return hanCount >= 12 && hanCount >= latinCount * 0.12;
+  return hanCount >= 12 && languageCharCount > 0 && hanCount / languageCharCount > 0.2;
 }
 
 function execFileNoStdin(
@@ -559,23 +552,80 @@ function sanitizeGeneratedHtml(raw: string): string {
     html = html.slice(0, mainEnd + "</main>".length);
   }
 
-  const sanitized = html
-    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
-    .replace(/<iframe\b[\s\S]*?<\/iframe>/gi, "")
-    .replace(/<object\b[\s\S]*?<\/object>/gi, "")
-    .replace(/<embed\b[^>]*>/gi, "")
-    .replace(/\s+on[a-z]+\s*=\s*"[^"]*"/gi, "")
-    .replace(/\s+on[a-z]+\s*=\s*'[^']*'/gi, "")
-    .replace(/\s+on[a-z]+\s*=\s*[^\s>]+/gi, "")
-    .replace(/\s(href|src)\s*=\s*"javascript:[^"]*"/gi, ' $1="#"')
-    .replace(/\s(href|src)\s*=\s*'javascript:[^']*'/gi, " $1='#'")
-    .trim();
+  const sanitized = sanitizeHtml(sanitizeStyleBlocks(html), {
+    allowedTags: [
+      "style",
+      "main",
+      "section",
+      "article",
+      "header",
+      "footer",
+      "div",
+      "span",
+      "p",
+      "br",
+      "hr",
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+      "ul",
+      "ol",
+      "li",
+      "blockquote",
+      "pre",
+      "code",
+      "strong",
+      "b",
+      "em",
+      "i",
+      "small",
+      "mark",
+      "a",
+      "img",
+      "details",
+      "summary",
+      "table",
+      "thead",
+      "tbody",
+      "tr",
+      "th",
+      "td",
+    ],
+    allowedAttributes: {
+      "*": ["class", "id", "role", "aria-*", "data-*"],
+      a: ["href", "target", "rel", "title"],
+      img: ["src", "alt", "loading", "width", "height"],
+      details: ["open"],
+      th: ["colspan", "rowspan"],
+      td: ["colspan", "rowspan"],
+    },
+    allowedSchemes: ["http", "https", "mailto"],
+    allowProtocolRelative: false,
+    disallowedTagsMode: "discard",
+    nonTextTags: ["script", "textarea", "option", "noscript"],
+  }).trim();
 
   if (!hasDocumentHtmlMarkers(sanitized)) {
     throw new Error("Codex HTML is missing document-to-html markers.");
   }
 
   return sanitized;
+}
+
+function sanitizeStyleBlocks(html: string): string {
+  return html.replace(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi, (_match, attrs: string, css: string) => {
+    const safeCss = css
+      .split(/(?<=;|})/)
+      .filter((chunk: string) => !isUnsafeCssChunk(chunk))
+      .join("");
+
+    return `<style${attrs}>${safeCss}</style>`;
+  });
+}
+
+function isUnsafeCssChunk(css: string): boolean {
+  return /url\s*\(|@import|expression\s*\(|javascript\s*:|behavior\s*:|-moz-binding/i.test(css);
 }
 
 function hasDocumentHtmlMarkers(html: string): boolean {
@@ -587,22 +637,52 @@ function codexBinaryPath(): string {
   return optionalEnv("CODEX_BIN") ?? join(process.cwd(), "node_modules", ".bin", "codex");
 }
 
+function codexProcessEnv(authEnv: Record<string, string>): NodeJS.ProcessEnv {
+  const allowedNames = [
+    "PATH",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "SHELL",
+    "SYSTEMROOT",
+    "WINDIR",
+  ];
+  const env: NodeJS.ProcessEnv = {
+    NODE_ENV: process.env.NODE_ENV ?? "production",
+  };
+
+  for (const name of allowedNames) {
+    const value = process.env[name];
+    if (value) env[name] = value;
+  }
+
+  return {
+    ...env,
+    ...authEnv,
+  };
+}
+
 async function prepareCodexAuthEnv(workDir: string): Promise<Record<string, string>> {
+  const codexHome = join(workDir, "codex-home");
+  await mkdir(codexHome, { recursive: true, mode: 0o700 });
+
   const accessToken = optionalEnv("CODEX_ACCESS_TOKEN");
   if (accessToken) {
-    return { CODEX_ACCESS_TOKEN: accessToken };
+    return { CODEX_ACCESS_TOKEN: accessToken, CODEX_HOME: codexHome, HOME: codexHome };
   }
 
   const authJson = getCodexAuthJson();
   if (!authJson) {
-    return {};
+    return { CODEX_HOME: codexHome, HOME: codexHome };
   }
 
-  const codexHome = join(workDir, "codex-home");
-  await mkdir(codexHome, { recursive: true, mode: 0o700 });
   await writeFile(join(codexHome, "auth.json"), authJson, { encoding: "utf8", mode: 0o600 });
 
-  return { CODEX_HOME: codexHome };
+  return { CODEX_HOME: codexHome, HOME: codexHome };
 }
 
 export function getCodexAuthJson(): string | null {
