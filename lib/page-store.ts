@@ -4,6 +4,8 @@ import { query } from "@/lib/db";
 import { parseNotionPageId, slugFromNotionUrl } from "@/lib/notion";
 
 const maxGenerationLogEntries = 40;
+const redactedText = "[redacted]";
+const redactedUrl = "[url redacted]";
 
 export function pageKeyFromPageId(pageId: string): string {
   return pageId.replaceAll("-", "").slice(0, 14);
@@ -81,6 +83,7 @@ export async function setPageStatus(
   status: PageStatus,
   lastError: string | null = null,
 ): Promise<PageRecord> {
+  const safeLastError = lastError ? sanitizePublicLogText(lastError) : null;
   const rows = await query<PageRecord>(
     `
       update pages
@@ -99,8 +102,8 @@ export async function setPageStatus(
     [
       pageKey,
       status,
-      lastError,
-      JSON.stringify(generationLogEntry(status, lastError || "Generation failed", 0)),
+      safeLastError,
+      JSON.stringify(generationLogEntry(status, safeLastError || "Generation failed", 0)),
     ],
   );
 
@@ -117,6 +120,7 @@ export async function setPageGenerationProgress(input: {
   step: string;
   progress: number;
 }): Promise<PageRecord> {
+  const safeStep = sanitizePublicLogText(input.step);
   const rows = await query<PageRecord>(
     `
       update pages
@@ -131,9 +135,9 @@ export async function setPageGenerationProgress(input: {
     [
       input.pageKey,
       input.status,
-      input.step,
+      safeStep,
       Math.max(0, Math.min(100, input.progress)),
-      JSON.stringify(generationLogEntry(input.status, input.step, input.progress)),
+      JSON.stringify(generationLogEntry(input.status, safeStep, input.progress)),
     ],
   );
 
@@ -142,6 +146,18 @@ export async function setPageGenerationProgress(input: {
   }
 
   return rows[0];
+}
+
+function sanitizePublicLogText(value: string): string {
+  return value
+    .replace(/\b(?:postgres|postgresql|mysql|redis|mongodb(?:\+srv)?):\/\/[^\s)'"<>]+/gi, redactedUrl)
+    .replace(/\bhttps?:\/\/[^\s)'"<>]+/gi, redactedUrl)
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${redactedText}`)
+    .replace(/\b(?:token|api[_-]?key|access[_-]?key|secret|password)\s*[:=]\s*[^\s,;'"<>]+/gi, (_match, name: string) => `${name}: ${redactedText}`)
+    .replace(/\b(?:sk|fc|ntn|r2yr|signkey-prod)_[A-Za-z0-9._~+/=-]{8,}\b/g, redactedText)
+    .replace(/\b(?:sk|fc)-[A-Za-z0-9._~+/=-]{8,}\b/g, redactedText)
+    .replace(/\bsignkey-prod-[A-Za-z0-9._~+/=-]{8,}\b/g, redactedText)
+    .replace(/\b[A-Fa-f0-9]{32,}\b/g, redactedText);
 }
 
 export async function markPageDirty(pageKey: string, dirtyAt: Date): Promise<PageRecord> {
