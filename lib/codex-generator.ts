@@ -1,13 +1,10 @@
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileOptions } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { documentFromMarkdown, parseDocumentJson, type DocumentHtmlJson } from "@/lib/document";
 import { optionalEnv } from "@/lib/env";
 import { renderHtmlBody } from "@/lib/render-html";
-
-const execFileAsync = promisify(execFile);
 
 const outputSchema = {
   type: "object",
@@ -128,7 +125,7 @@ async function generateWithCodex(input: {
       "Return only schema-conforming JSON.",
     ].join("\n");
 
-    await execFileAsync(
+    await execFileNoStdin(
       codexBin,
       [
         "exec",
@@ -173,7 +170,7 @@ async function generateHtmlWithCodex(input: {
   try {
     await writeFile(markdownPath, input.markdown, "utf8");
 
-    const result = await execFileAsync(
+    const result = await execFileNoStdin(
       codexBin,
       [
         "exec",
@@ -233,6 +230,26 @@ function documentToHtmlPrompt(notionUrl: string, artifactFile: string): string {
     "",
     "Build a complete page from notion.md. If the document has quantitative content, use KPI cards, a small chart, or a table. If it has a mechanism, use a simple token-driven SVG concept diagram. Every major claim should have an expandable detail row.",
   ].join("\n");
+}
+
+function execFileNoStdin(
+  file: string,
+  args: string[],
+  options: ExecFileOptions,
+): Promise<{ stdout: string | Buffer; stderr: string | Buffer }> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(file, args, options, (error, stdout, stderr) => {
+      if (error) {
+        Object.assign(error, { stdout, stderr });
+        reject(error);
+        return;
+      }
+
+      resolve({ stdout, stderr });
+    }) as ReturnType<typeof execFile> | undefined;
+
+    child?.stdin?.end();
+  });
 }
 
 function normalizeExecResult(result: unknown): {

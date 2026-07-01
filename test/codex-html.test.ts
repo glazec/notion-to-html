@@ -8,6 +8,7 @@ describe("Codex document-to-html generation", () => {
     vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
 
     const calls: Array<{ args: string[]; options: { timeout?: number } }> = [];
+    const endStdin = vi.fn();
     vi.doMock("node:child_process", () => ({
       execFile: (
         _file: string,
@@ -31,6 +32,7 @@ describe("Codex document-to-html generation", () => {
           "```",
         ].join("\n"));
         callback(null, "", "");
+        return { stdin: { end: endStdin } };
       },
     }));
 
@@ -51,6 +53,7 @@ describe("Codex document-to-html generation", () => {
     expect(body).toContain("<details class=\"x\">");
     expect(body).not.toContain("<script");
     expect(body).not.toContain("```");
+    expect(endStdin).toHaveBeenCalledOnce();
 
     vi.unstubAllEnvs();
   });
