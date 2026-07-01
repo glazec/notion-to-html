@@ -30,16 +30,30 @@ describe("Notion page id parsing", () => {
   });
 
   it("normalizes a Notion URL pasted into the root path", () => {
-    expect(
-      notionUrlFromPathSegments([
-        "https:",
-        "app.notion.com",
-        "p",
-        "iosgvc",
-        "1Money-6-11-2026-EN-37cf0ada243c81279b43e3a1603c6a43",
-      ]),
-    ).toBe(
-      "https://app.notion.com/p/iosgvc/1Money-6-11-2026-EN-37cf0ada243c81279b43e3a1603c6a43",
-    );
+    const cases = [
+      {
+        segments: [
+          "https:",
+          "app.notion.com",
+          "p",
+          "iosgvc",
+          "1Money-6-11-2026-EN-37cf0ada243c81279b43e3a1603c6a43",
+        ],
+        expected: "https://app.notion.com/p/iosgvc/1Money-6-11-2026-EN-37cf0ada243c81279b43e3a1603c6a43",
+      },
+      {
+        segments: [
+          "https:",
+          "www.notion.so",
+          "workspace",
+          "Different-Page-fedcba9876543210fedcba9876543210",
+        ],
+        expected: "https://www.notion.so/workspace/Different-Page-fedcba9876543210fedcba9876543210",
+      },
+    ];
+
+    for (const testCase of cases) {
+      expect(notionUrlFromPathSegments(testCase.segments)).toBe(testCase.expected);
+    }
   });
 });
