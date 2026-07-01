@@ -9,6 +9,7 @@ import { generateDocumentHtmlBody } from "@/lib/codex-generator";
 import { fetchPublicNotionContent } from "@/lib/firecrawl";
 import { documentFromMarkdown } from "@/lib/document";
 import type { GenerationLogEntry } from "@/lib/db";
+import { prepareSourceAssets } from "@/lib/source-assets";
 import { wrapServedHtml } from "@/lib/render-html";
 import { sha256 } from "@/lib/hash";
 
@@ -48,11 +49,21 @@ export async function generatePage(pageKey: string): Promise<{
     await setPageGenerationProgress({
       pageKey,
       status: "generating",
-      step: "Generating document-to-html page",
+      step: "Processing images and links",
       progress: 55,
     });
-    const documentJson = documentFromMarkdown({
+    const preparedSource = await prepareSourceAssets({
+      pageId: source.pageId,
       markdown: source.markdown,
+    });
+    await setPageGenerationProgress({
+      pageKey,
+      status: "generating",
+      step: "Generating document-to-html page",
+      progress: 65,
+    });
+    const documentJson = documentFromMarkdown({
+      markdown: preparedSource.markdown,
       notionUrl: source.url,
     });
     await setPageGenerationProgress({
@@ -62,7 +73,7 @@ export async function generatePage(pageKey: string): Promise<{
       progress: 75,
     });
     const body = await withCodexHeartbeat(pageKey, () => generateDocumentHtmlBody({
-      markdown: source.markdown,
+      markdown: preparedSource.markdown,
       notionUrl: source.url,
     }));
     const contentHash = sha256(body);

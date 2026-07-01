@@ -67,6 +67,27 @@ export async function putHtmlObject(key: string, html: string): Promise<void> {
   );
 }
 
+export async function putBinaryObject(
+  key: string,
+  body: Uint8Array,
+  contentType: string,
+): Promise<void> {
+  if (useLocalBucket()) {
+    await putLocalBinaryObject(key, body);
+    return;
+  }
+
+  await getS3().send(
+    new PutObjectCommand({
+      Bucket: bucketName() ?? requireEnv("BUCKET"),
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+      CacheControl: "public, max-age=31536000, immutable",
+    }),
+  );
+}
+
 export async function getHtmlObject(key: string): Promise<string> {
   if (useLocalBucket()) {
     return getLocalObject(key);
@@ -86,6 +107,34 @@ export async function getHtmlObject(key: string): Promise<string> {
   return result.Body.transformToString();
 }
 
+export async function getBinaryObject(key: string): Promise<{
+  body: Uint8Array;
+  contentType: string;
+}> {
+  if (useLocalBucket()) {
+    return {
+      body: await getLocalBinaryObject(key),
+      contentType: contentTypeForKey(key),
+    };
+  }
+
+  const result = await getS3().send(
+    new GetObjectCommand({
+      Bucket: bucketName() ?? requireEnv("BUCKET"),
+      Key: key,
+    }),
+  );
+
+  if (!result.Body) {
+    throw new Error(`Bucket object has no body: ${key}`);
+  }
+
+  return {
+    body: await result.Body.transformToByteArray(),
+    contentType: result.ContentType ?? contentTypeForKey(key),
+  };
+}
+
 async function putLocalObject(key: string, html: string): Promise<void> {
   const { mkdir, writeFile } = await import("node:fs/promises");
   const { dirname } = await import("node:path");
@@ -94,9 +143,22 @@ async function putLocalObject(key: string, html: string): Promise<void> {
   await writeFile(path, html, "utf8");
 }
 
+async function putLocalBinaryObject(key: string, body: Uint8Array): Promise<void> {
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  const { dirname } = await import("node:path");
+  const path = await localPath(key);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, body);
+}
+
 async function getLocalObject(key: string): Promise<string> {
   const { readFile } = await import("node:fs/promises");
   return readFile(await localPath(key), "utf8");
+}
+
+async function getLocalBinaryObject(key: string): Promise<Uint8Array> {
+  const { readFile } = await import("node:fs/promises");
+  return readFile(await localPath(key));
 }
 
 async function localPath(key: string): Promise<string> {
@@ -113,4 +175,14 @@ function safeObjectKey(key: string): string {
   }
 
   return key;
+}
+
+function contentTypeForKey(key: string): string {
+  const lower = key.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".svg")) return "image/svg+xml";
+  return "application/octet-stream";
 }

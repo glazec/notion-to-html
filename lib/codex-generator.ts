@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { documentFromMarkdown, parseDocumentJson, type DocumentHtmlJson } from "@/lib/document";
 import { optionalEnv } from "@/lib/env";
+import { preserveGeneratedConnections } from "@/lib/generated-connections";
 import { renderHtmlBody } from "@/lib/render-html";
 
 const outputSchema = {
@@ -80,6 +81,18 @@ export async function generateDocumentHtmlBody(input: {
   }
 
   return renderHtmlBody(documentFromMarkdown(input));
+}
+
+export async function describeImageAsset(input: {
+  imagePath: string;
+  altText: string;
+  sourceUrl: string;
+}): Promise<string> {
+  if (optionalEnv("CODEX_GENERATION_ENABLED") === "false" || !hasCodexCredentials()) {
+    return fallbackImageDescription(input.altText);
+  }
+
+  return describeImageWithCodex(input);
 }
 
 function isMissingCodexBinaryError(error: unknown): boolean {
@@ -196,7 +209,61 @@ async function generateHtmlWithCodex(input: {
 
     const { stdout, stderr } = normalizeExecResult(result);
     const raw = await readCodexHtmlArtifact([artifactPath, outputPath], stdout, stderr);
-    return sanitizeGeneratedHtml(raw);
+    return preserveGeneratedConnections(sanitizeGeneratedHtml(raw), input.markdown);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function describeImageWithCodex(input: {
+  imagePath: string;
+  altText: string;
+  sourceUrl: string;
+}): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "notion-to-html-image-codex-"));
+  const outputPath = join(dir, "description.txt");
+  const codexBin = codexBinaryPath();
+  const authEnv = await prepareCodexAuthEnv(dir);
+
+  try {
+    const result = await execFileNoStdin(
+      codexBin,
+      [
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "workspace-write",
+        "--cd",
+        dir,
+        "-i",
+        input.imagePath,
+        "-o",
+        outputPath,
+        [
+          "Describe this Notion page image for a generated HTML document.",
+          `Alt text: ${input.altText || "Image"}`,
+          `Source URL: ${input.sourceUrl}`,
+          "Return one concise factual sentence. Mention whether it appears to be a product demo, UI screenshot, chart, graph, diagram, photo, or other visual when clear. Do not invent values that are not visible.",
+        ].join("\n"),
+      ],
+      {
+        cwd: dir,
+        timeout: 120_000,
+        maxBuffer: 4 * 1024 * 1024,
+        env: {
+          ...process.env,
+          ...authEnv,
+        },
+      },
+    );
+
+    const raw = await readCodexTextArtifact(outputPath, result.stdout);
+    return normalizeImageDescription(raw, input.altText);
+  } catch (error) {
+    if (isMissingCodexBinaryError(error)) {
+      return fallbackImageDescription(input.altText);
+    }
+    throw error;
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -214,6 +281,9 @@ function documentToHtmlPrompt(notionUrl: string, artifactFile: string): string {
     "- Return a body artifact for an existing app shell: include one <style data-document-to-html> tag and one <main class=\"document-html-page wrap\"> root.",
     "- Do not include <!doctype>, <html>, <head>, <body>, <script>, iframe, object, embed, external CSS, external JS, or CDN fonts.",
     "- Preserve public image URLs as <img> when useful. Preserve source links with normal <a href> links.",
+    "- Preserve /assets/... local image URLs exactly when including source images.",
+    "- Use Codex image descriptions from notion.md as factual visual context. Include product demos, UI screenshots, photos, and mechanism visuals directly when they help readers inspect the source. For charts and graphs, either re-render the message as a clean chart/table or summarize the text if the image is too noisy.",
+    "- Preserve all linked Notion subpages from notion.md. Include them as source links, related pages, appendix links, or detail rows, but do not drop the connection.",
     "- Use native <details class=\"x\"> rows for depth. The page should be skimmable first and expandable second.",
     "",
     "Document-to-html design language:",
@@ -292,6 +362,38 @@ async function readCodexHtmlArtifact(
   const suffix = stderrText ? ` Stderr: ${truncateForError(stderrText)}` : "";
   const stdoutSuffix = stdoutText.trim() ? ` Stdout: ${truncateForError(stdoutText.trim())}` : "";
   throw new Error(`Codex did not produce an HTML artifact.${suffix}${stdoutSuffix}`);
+}
+
+async function readCodexTextArtifact(
+  outputPath: string,
+  stdout: string | Buffer,
+): Promise<string> {
+  try {
+    const fileOutput = await readFile(outputPath, "utf8");
+    if (fileOutput.trim()) return fileOutput;
+  } catch (error) {
+    if (!isMissingCodexBinaryError(error)) throw error;
+  }
+
+  return outputToText(stdout);
+}
+
+function normalizeImageDescription(raw: string, altText: string): string {
+  const text = raw
+    .trim()
+    .replace(/^```(?:text)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text) return fallbackImageDescription(altText);
+  return text.length > 280 ? `${text.slice(0, 277).trim()}...` : text;
+}
+
+function fallbackImageDescription(altText: string): string {
+  return altText.trim()
+    ? `Image from the Notion page labeled "${altText.trim()}".`
+    : "Image from the Notion page.";
 }
 
 function outputToText(output: string | Buffer): string {

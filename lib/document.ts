@@ -58,7 +58,7 @@ export function documentFromMarkdown(input: {
       continue;
     }
 
-    const image = line.match(/^!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)$/);
+    const image = line.match(/^!\[([^\]]*)\]\(((?:https?:\/\/|\/assets\/)[^)\s]+)\)$/);
     if (image) {
       blocks.push({
         type: "image",
