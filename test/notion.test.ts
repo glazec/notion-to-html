@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatNotionId, parseNotionPageId, slugFromNotionUrl } from "@/lib/notion";
+import {
+  formatNotionId,
+  notionUrlFromPathSegments,
+  parseNotionPageId,
+  slugFromNotionUrl,
+} from "@/lib/notion";
 
 describe("Notion page id parsing", () => {
   it("extracts compact ids from Notion URLs", () => {
@@ -22,5 +27,19 @@ describe("Notion page id parsing", () => {
         "https://app.notion.com/p/iosgvc/1Money-6-11-2026-EN-37cf0ada243c81279b43e3a1603c6a43",
       ),
     ).toBe("1Money-6-11-2026-EN");
+  });
+
+  it("normalizes a Notion URL pasted into the root path", () => {
+    expect(
+      notionUrlFromPathSegments([
+        "https:",
+        "app.notion.com",
+        "p",
+        "iosgvc",
+        "1Money-6-11-2026-EN-37cf0ada243c81279b43e3a1603c6a43",
+      ]),
+    ).toBe(
+      "https://app.notion.com/p/iosgvc/1Money-6-11-2026-EN-37cf0ada243c81279b43e3a1603c6a43",
+    );
   });
 });

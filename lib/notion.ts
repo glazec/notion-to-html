@@ -52,6 +52,25 @@ export function isNotionUrl(value: string): boolean {
   }
 }
 
+export function notionUrlFromPathSegments(segments: string[]): string | null {
+  const rawPath = segments
+    .map((segment) => decodeURIComponent(segment))
+    .join("/")
+    .trim();
+
+  if (!rawPath) return null;
+
+  const candidate = normalizePastedUrlPath(rawPath);
+  if (!isNotionUrl(candidate)) return null;
+
+  try {
+    parseNotionPageId(candidate);
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
 export function formatNotionId(id: string): string {
   const compact = id.replaceAll("-", "").toLowerCase();
 
@@ -66,6 +85,19 @@ export function formatNotionId(id: string): string {
     compact.slice(16, 20),
     compact.slice(20),
   ].join("-");
+}
+
+function normalizePastedUrlPath(value: string): string {
+  const withScheme = value
+    .replace(/^https:\/*/i, "https://")
+    .replace(/^http:\/*/i, "http://");
+
+  if (/^https?:\/\//i.test(withScheme)) return withScheme;
+  if (/^(?:app\.notion\.com|www\.notion\.so|notion\.so|notion\.site|notion\.com)\//i.test(withScheme)) {
+    return `https://${withScheme}`;
+  }
+
+  return withScheme;
 }
 
 function cleanSlug(value: string): string {
