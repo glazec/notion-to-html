@@ -25,6 +25,7 @@ export async function servedPageResponse(page: PageRecord, requestUrl: string): 
       status: displayPage.status,
       generationStep: displayPage.generation_step,
       generationProgress: displayPage.generation_progress,
+      generationLog: displayPage.generation_log,
     });
 
     return htmlResponse(html);
@@ -39,12 +40,14 @@ export async function servedPageResponse(page: PageRecord, requestUrl: string): 
         status: displayPage.status,
         generationStep: displayPage.generation_step,
         generationProgress: displayPage.generation_progress,
+        generationLog: displayPage.generation_log,
         generatedAt: displayPage.last_generated_at,
       }),
       pageState: {
         status: displayPage.status,
         generationStep: displayPage.generation_step,
         generationProgress: displayPage.generation_progress,
+        generationLog: displayPage.generation_log,
         generatedAt: displayPage.last_generated_at,
       },
     }),

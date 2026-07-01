@@ -127,4 +127,40 @@ describe("HTML rendering", () => {
     expect(html).not.toContain('<aside class="nth-status-banner"');
     expect(html).not.toContain("90% complete. This page refreshes every few seconds.");
   });
+
+  it("renders generation log details in the floating toolbar panel", () => {
+    const html = wrapServedHtml({
+      title: "Cached",
+      notionUrl: "https://notion.so/test",
+      regeneratePath: "/api/pages/abc/regenerate",
+      body: "<main>Cached copy</main>",
+      pageState: {
+        status: "generating",
+        generationStep: "Rendering HTML",
+        generationProgress: 75,
+        generatedAt: new Date(),
+        generationLog: [
+          {
+            at: "2026-07-01T00:10:19.000Z",
+            status: "queued",
+            step: "Queued for regeneration",
+            progress: 0,
+          },
+          {
+            at: "2026-07-01T00:10:30.000Z",
+            status: "generating",
+            step: "Rendering HTML",
+            progress: 75,
+          },
+        ],
+      },
+    });
+
+    expect(html).toContain("nth-log-list");
+    expect(html).toContain("Queued for regeneration");
+    expect(html).toContain("Rendering HTML");
+    expect(html).toContain("75%");
+    expect(html).toContain('data-progress-details');
+    expect(html).toContain('data-progress-toggle');
+  });
 });

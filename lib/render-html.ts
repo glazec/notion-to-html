@@ -1,10 +1,11 @@
 import type { DocumentBlock, DocumentHtmlJson } from "@/lib/document";
-import type { PageStatus } from "@/lib/db";
+import type { GenerationLogEntry, PageStatus } from "@/lib/db";
 
 export type ServedPageState = {
   status?: PageStatus;
   generationStep?: string | null;
   generationProgress?: number | null;
+  generationLog?: GenerationLogEntry[] | null;
   generatedAt?: Date | null;
 };
 
@@ -91,7 +92,7 @@ function toolbarHtml(
   const freshness = freshnessLabel(pageState?.generatedAt);
   const progress = normalizedProgress(pageState);
   const status = pageState?.status ?? "ready";
-  const showToolbarProgress = isGenerationActive(pageState) && Boolean(pageState?.generatedAt);
+  const showToolbarProgress = (isGenerationActive(pageState) || hasGenerationLog(pageState)) && Boolean(pageState?.generatedAt);
   const refreshCopy = status === "generating" || status === "queued"
     ? `Current copy is ${freshness.toLowerCase()}. A refresh is already in progress.`
     : `Current copy is ${freshness.toLowerCase()}.`;
@@ -128,6 +129,19 @@ function toolbarHtml(
   const dialog = document.getElementById("nth-refresh-dialog");
   const open = document.querySelector("[data-refresh-open]");
   const form = document.getElementById("nth-refresh-form");
+  const progressDetails = document.querySelector("[data-progress-details]");
+  const progressToggle = document.querySelector("[data-progress-toggle]");
+  progressToggle?.addEventListener("click", () => {
+    const isOpen = progressDetails?.getAttribute("data-open") === "true";
+    progressDetails?.setAttribute("data-open", String(!isOpen));
+    progressToggle.setAttribute("aria-expanded", String(!isOpen));
+  });
+  progressDetails?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      progressDetails.setAttribute("data-open", "false");
+      progressToggle?.setAttribute("aria-expanded", "false");
+    }
+  });
   open?.addEventListener("click", () => {
     if (dialog && typeof dialog.showModal === "function") {
       dialog.showModal();
@@ -144,19 +158,34 @@ function toolbarHtml(
 function toolbarProgressHtml(pageState: ServedPageState | undefined, freshness: string): string {
   const progress = normalizedProgress(pageState);
   const step = pageState?.generationStep || "Refreshing cached HTML";
+  const label = pageState?.status === "failed" ? "Refresh failed" : `Refreshing ${progress}%`;
 
-  return `<details class="nth-progress-details">
-    <summary class="nth-freshness nth-progress-summary" title="${escapeAttribute(step)}">
-      <span>Refreshing ${progress}%</span>
+  return `<div class="nth-progress-details" data-progress-details tabindex="0" role="group" aria-label="Generation details">
+    <button class="nth-freshness nth-progress-summary" type="button" title="${escapeAttribute(step)}" data-progress-toggle aria-expanded="false">
+      <span>${escapeHtml(label)}</span>
       <span class="nth-mini-progress" aria-hidden="true"><span style="width:${progress}%"></span></span>
-    </summary>
-    <div class="nth-progress-panel" role="status">
+    </button>
+    <div class="nth-progress-panel" role="status" aria-live="polite">
       <strong>Refreshing cached HTML</strong>
       <p>${escapeHtml(step)}</p>
       <div class="nth-progress"><span style="width:${progress}%"></span></div>
+      ${generationLogHtml(pageState)}
       <small>${escapeHtml(freshness)}</small>
     </div>
-  </details>`;
+  </div>`;
+}
+
+function generationLogHtml(pageState: ServedPageState | undefined): string {
+  const log = normalizedGenerationLog(pageState);
+  if (log.length === 0) return "";
+
+  return `<ol class="nth-log-list">
+    ${log.map((entry) => `<li>
+      <time>${escapeHtml(formatLogTime(entry.at))}</time>
+      <span>${escapeHtml(entry.step)}</span>
+      <b>${entry.progress}%</b>
+    </li>`).join("")}
+  </ol>`;
 }
 
 export function progressBodyHtml(pageState: ServedPageState): string {
@@ -180,9 +209,30 @@ function isGenerationActive(pageState: ServedPageState | undefined): boolean {
   return pageState?.status === "queued" || pageState?.status === "generating";
 }
 
+function hasGenerationLog(pageState: ServedPageState | undefined): boolean {
+  return normalizedGenerationLog(pageState).length > 0 && pageState?.status === "failed";
+}
+
 function normalizedProgress(pageState: ServedPageState | undefined): number {
   const value = pageState?.generationProgress ?? 0;
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function normalizedGenerationLog(pageState: ServedPageState | undefined): GenerationLogEntry[] {
+  const log = Array.isArray(pageState?.generationLog) ? pageState.generationLog : [];
+  return log
+    .filter((entry): entry is GenerationLogEntry => Boolean(
+      entry &&
+      typeof entry.at === "string" &&
+      typeof entry.step === "string" &&
+      typeof entry.progress === "number",
+    ))
+    .slice(-8);
+}
+
+function formatLogTime(value: string): string {
+  const match = value.match(/T(\d{2}:\d{2}:\d{2})/);
+  return match ? `${match[1]} UTC` : value;
 }
 
 function toolbarFreshnessLabel(pageState: ServedPageState | undefined): string {
@@ -249,15 +299,19 @@ pre { overflow: auto; padding: 16px; border: 1px solid var(--line); border-radiu
 .nth-toolbar { position: fixed; right: 18px; bottom: 18px; display: flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid #d4d4d4; border-radius: 8px; background: rgba(255,255,255,.96); box-shadow: 0 12px 34px rgba(0,0,0,.14); z-index: 50; }
 .nth-freshness { height: 36px; display: inline-flex; align-items: center; padding: 0 10px; color: var(--muted); font-size: 12px; white-space: nowrap; border-right: 1px solid var(--line); }
 .nth-progress-details { position: relative; }
-.nth-progress-details summary { list-style: none; cursor: pointer; }
-.nth-progress-details summary::-webkit-details-marker { display: none; }
-.nth-progress-summary { min-width: 118px; display: grid; align-content: center; gap: 4px; }
+.nth-progress-summary { min-width: 118px; display: grid; align-content: center; gap: 4px; border: 0; border-right: 1px solid var(--line); background: transparent; cursor: pointer; text-align: left; }
 .nth-mini-progress { display: block; height: 3px; overflow: hidden; border-radius: 999px; background: var(--line); }
 .nth-mini-progress span { display: block; height: 100%; border-radius: inherit; background: var(--fg); }
-.nth-progress-panel { position: absolute; right: 0; bottom: calc(100% + 10px); width: 280px; padding: 14px; border: 1px solid #d4d4d4; border-radius: 8px; background: #fff; box-shadow: 0 18px 46px rgba(0,0,0,.18); }
+.nth-progress-panel { position: absolute; right: 0; bottom: calc(100% + 10px); width: 340px; padding: 14px; border: 1px solid #d4d4d4; border-radius: 8px; background: #fff; box-shadow: 0 18px 46px rgba(0,0,0,.18); opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(4px); transition: opacity .15s ease, transform .15s ease, visibility .15s ease; }
+.nth-progress-details:hover .nth-progress-panel, .nth-progress-details:focus-within .nth-progress-panel, .nth-progress-details[data-open="true"] .nth-progress-panel { opacity: 1; visibility: visible; pointer-events: auto; transform: translateY(0); }
 .nth-progress-panel strong { display: block; margin-bottom: 6px; font-size: 14px; }
 .nth-progress-panel p { margin: 0 0 12px; color: var(--muted); font-size: 13px; line-height: 1.45; }
 .nth-progress-panel small { display: block; margin-top: 10px; color: var(--muted); font-size: 12px; }
+.nth-log-list { margin: 12px 0 0; padding: 10px 0 0; list-style: none; border-top: 1px solid var(--line); display: grid; gap: 8px; max-height: 220px; overflow: auto; }
+.nth-log-list li { display: grid; grid-template-columns: 76px 1fr auto; gap: 8px; align-items: baseline; color: var(--fg); font-size: 12px; line-height: 1.35; }
+.nth-log-list time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.nth-log-list span { min-width: 0; overflow-wrap: anywhere; }
+.nth-log-list b { color: var(--muted); font-weight: 600; font-variant-numeric: tabular-nums; }
 .nth-tool-wrap { position: relative; display: inline-grid; place-items: center; }
 .nth-tool-wrap::after { content: attr(data-tooltip); position: absolute; right: 0; bottom: calc(100% + 8px); pointer-events: none; opacity: 0; transform: translateY(4px); transition: opacity .15s ease, transform .15s ease; white-space: nowrap; border: 1px solid #d4d4d4; border-radius: 6px; background: var(--fg); color: #fff; padding: 6px 8px; font-size: 12px; box-shadow: 0 8px 18px rgba(0,0,0,.14); }
 .nth-tool-wrap:hover::after, .nth-tool-wrap:focus-within::after { opacity: 1; transform: translateY(0); }
@@ -276,7 +330,7 @@ pre { overflow: auto; padding: 16px; border: 1px solid var(--line); border-radiu
 .nth-dialog-primary, .nth-dialog-secondary { height: 38px; border-radius: 6px; padding: 0 14px; cursor: pointer; }
 .nth-dialog-primary { border: 1px solid var(--fg); background: var(--fg); color: #fff; }
 .nth-dialog-secondary { border: 1px solid var(--line); background: #fff; color: var(--fg); }
-@media (max-width: 640px) { .nth-document { width: min(100% - 28px, 860px); padding-top: 24px; } .nth-freshness { max-width: 116px; overflow: hidden; text-overflow: ellipsis; } .nth-progress-panel { width: min(280px, calc(100vw - 36px)); } }
+@media (max-width: 640px) { .nth-document { width: min(100% - 28px, 860px); padding-top: 24px; } .nth-freshness { max-width: 116px; overflow: hidden; text-overflow: ellipsis; } .nth-progress-panel { width: min(340px, calc(100vw - 36px)); } .nth-log-list li { grid-template-columns: 1fr auto; } .nth-log-list time { display: none; } }
 `;
 }
 

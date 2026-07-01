@@ -8,6 +8,7 @@ import {
 import { generateDocumentHtmlBody } from "@/lib/codex-generator";
 import { fetchPublicNotionContent } from "@/lib/firecrawl";
 import { documentFromMarkdown } from "@/lib/document";
+import type { GenerationLogEntry } from "@/lib/db";
 import { wrapServedHtml } from "@/lib/render-html";
 import { sha256 } from "@/lib/hash";
 
@@ -52,10 +53,10 @@ export async function generatePage(pageKey: string): Promise<{
       step: "Rendering HTML",
       progress: 75,
     });
-    const body = await generateDocumentHtmlBody({
+    const body = await withCodexHeartbeat(pageKey, () => generateDocumentHtmlBody({
       markdown: source.markdown,
       notionUrl: source.url,
-    });
+    }));
     const contentHash = sha256(body);
     const objectKey = `pages/${source.pageId}/${contentHash}/index.html`;
 
@@ -80,6 +81,28 @@ export async function generatePage(pageKey: string): Promise<{
   }
 }
 
+async function withCodexHeartbeat<T>(
+  pageKey: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  let minutes = 0;
+  const timer = setInterval(() => {
+    minutes += 1;
+    void setPageGenerationProgress({
+      pageKey,
+      status: "generating",
+      step: `Codex generation still running (${minutes}m)`,
+      progress: Math.min(88, 75 + minutes),
+    });
+  }, 60 * 1000);
+
+  try {
+    return await work();
+  } finally {
+    clearInterval(timer);
+  }
+}
+
 export async function buildServedHtml(input: {
   pageKey: string;
   title: string;
@@ -89,6 +112,7 @@ export async function buildServedHtml(input: {
   status?: "queued" | "generating" | "ready" | "failed";
   generationStep?: string | null;
   generationProgress?: number | null;
+  generationLog?: GenerationLogEntry[] | null;
 }): Promise<string> {
   const body = await getHtmlObject(input.objectKey);
   return wrapServedHtml({
@@ -100,6 +124,7 @@ export async function buildServedHtml(input: {
       status: input.status,
       generationStep: input.generationStep,
       generationProgress: input.generationProgress,
+      generationLog: input.generationLog,
       generatedAt: input.generatedAt,
     },
   });

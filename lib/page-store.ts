@@ -1,7 +1,9 @@
 import type { DocumentHtmlJson } from "@/lib/document";
-import type { PageRecord, PageStatus } from "@/lib/db";
+import type { GenerationLogEntry, PageRecord, PageStatus } from "@/lib/db";
 import { query } from "@/lib/db";
 import { parseNotionPageId, slugFromNotionUrl } from "@/lib/notion";
+
+const maxGenerationLogEntries = 40;
 
 export function pageKeyFromPageId(pageId: string): string {
   return pageId.replaceAll("-", "").slice(0, 14);
@@ -25,10 +27,11 @@ export async function upsertPageFromNotionUrl(
         status,
         generation_step,
         generation_progress,
+        generation_log,
         user_transformed_at,
         updated_at
       )
-      values ($1, $2, $3, $4, 'queued', 'Queued', 0, case when $5 then now() else null end, now())
+      values ($1, $2, $3, $4, 'queued', 'Queued', 0, jsonb_build_array($6::jsonb), case when $5 then now() else null end, now())
       on conflict (notion_page_id)
       do update set
         slug = excluded.slug,
@@ -37,7 +40,14 @@ export async function upsertPageFromNotionUrl(
         updated_at = now()
       returning *
     `,
-    [pageKey, slug, notionPageId, notionUrl, userTransformed],
+    [
+      pageKey,
+      slug,
+      notionPageId,
+      notionUrl,
+      userTransformed,
+      JSON.stringify(generationLogEntry("queued", "Queued", 0)),
+    ],
   );
 
   return rows[0];
@@ -78,11 +88,20 @@ export async function setPageStatus(
           last_error = $3,
           generation_step = case when $2 = 'failed' then coalesce($3, 'Generation failed') else generation_step end,
           generation_progress = case when $2 = 'failed' then 0 else generation_progress end,
+          generation_log = case
+            when $2 = 'failed' then ${appendGenerationLogSql("$4::jsonb")}
+            else generation_log
+          end,
           updated_at = now()
       where page_key = $1
       returning *
     `,
-    [pageKey, status, lastError],
+    [
+      pageKey,
+      status,
+      lastError,
+      JSON.stringify(generationLogEntry(status, lastError || "Generation failed", 0)),
+    ],
   );
 
   if (!rows[0]) {
@@ -104,11 +123,18 @@ export async function setPageGenerationProgress(input: {
       set status = $2,
           generation_step = $3,
           generation_progress = $4,
+          generation_log = ${appendGenerationLogSql("$5::jsonb")},
           updated_at = now()
       where page_key = $1
       returning *
     `,
-    [input.pageKey, input.status, input.step, Math.max(0, Math.min(100, input.progress))],
+    [
+      input.pageKey,
+      input.status,
+      input.step,
+      Math.max(0, Math.min(100, input.progress)),
+      JSON.stringify(generationLogEntry(input.status, input.step, input.progress)),
+    ],
   );
 
   if (!rows[0]) {
@@ -126,11 +152,16 @@ export async function markPageDirty(pageKey: string, dirtyAt: Date): Promise<Pag
           status = 'queued',
           generation_step = 'Queued for regeneration',
           generation_progress = 0,
+          generation_log = jsonb_build_array($3::jsonb),
           updated_at = now()
       where page_key = $1
       returning *
     `,
-    [pageKey, dirtyAt],
+    [
+      pageKey,
+      dirtyAt,
+      JSON.stringify(generationLogEntry("queued", "Queued for regeneration", 0, dirtyAt)),
+    ],
   );
 
   if (!rows[0]) {
@@ -169,12 +200,17 @@ export async function completePageGeneration(input: {
           last_generated_at = now(),
           generation_step = 'Ready',
           generation_progress = 100,
+          generation_log = ${appendGenerationLogSql("$3::jsonb")},
           last_error = null,
           updated_at = now()
       where page_key = $1
       returning *
     `,
-    [input.pageKey, input.contentHash],
+    [
+      input.pageKey,
+      input.contentHash,
+      JSON.stringify(generationLogEntry("ready", "Published cached HTML", 100)),
+    ],
   );
 
   if (!rows[0]) {
@@ -182,6 +218,32 @@ export async function completePageGeneration(input: {
   }
 
   return rows[0];
+}
+
+function generationLogEntry(
+  status: PageStatus,
+  step: string,
+  progress: number,
+  at = new Date(),
+): GenerationLogEntry {
+  return {
+    at: at.toISOString(),
+    status,
+    step,
+    progress: Math.max(0, Math.min(100, Math.round(progress))),
+  };
+}
+
+function appendGenerationLogSql(entrySql: string): string {
+  return `(
+    select coalesce(jsonb_agg(entry order by ord), '[]'::jsonb)
+    from (
+      select entry, ord
+      from jsonb_array_elements(coalesce(generation_log, '[]'::jsonb) || jsonb_build_array(${entrySql})) with ordinality as items(entry, ord)
+      order by ord desc
+      limit ${maxGenerationLogEntries}
+    ) recent
+  )`;
 }
 
 export async function getCurrentVersion(pageKey: string): Promise<{
