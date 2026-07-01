@@ -16,10 +16,18 @@ export async function generatePage(pageKey: string): Promise<{
   pageKey: string;
   contentHash: string;
   objectKey: string;
+} | {
+  pageKey: string;
+  skipped: true;
+  reason: "already-ready";
 }> {
   const page = await findPage(pageKey);
   if (!page) {
     throw new Error(`Page not found: ${pageKey}`);
+  }
+
+  if (page.status === "ready" && page.current_hash && !page.dirty_at) {
+    return { pageKey, skipped: true, reason: "already-ready" };
   }
 
   await setPageGenerationProgress({

@@ -86,4 +86,25 @@ describe("page generation", () => {
 
     expect(completePageGeneration).toHaveBeenCalled();
   });
+
+  it("skips stale duplicate generation events when the page is already ready", async () => {
+    findPage.mockResolvedValue({
+      page_key: "abc123",
+      notion_url: "https://notion.so/test",
+      current_hash: "current-hash",
+      status: "ready",
+      dirty_at: null,
+    });
+
+    const { generatePage } = await import("@/lib/generation");
+    const result = await generatePage("abc123");
+
+    expect(result).toMatchObject({
+      pageKey: "abc123",
+      skipped: true,
+      reason: "already-ready",
+    });
+    expect(fetchPublicNotionContent).not.toHaveBeenCalled();
+    expect(generateDocumentHtmlBody).not.toHaveBeenCalled();
+  });
 });
