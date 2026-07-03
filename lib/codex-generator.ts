@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sanitizeHtml from "sanitize-html";
 import { documentFromMarkdown, parseDocumentJson, type DocumentHtmlJson } from "@/lib/document";
+import type { PageLanguage } from "@/lib/db";
 import { optionalEnv } from "@/lib/env";
 import { preserveGeneratedConnections } from "@/lib/generated-connections";
 import { renderHtmlBody } from "@/lib/render-html";
@@ -76,6 +77,7 @@ export async function generateDocumentJson(input: {
 export async function generateDocumentHtmlBody(input: {
   markdown: string;
   notionUrl: string;
+  targetLanguage?: PageLanguage;
 }): Promise<string> {
   if (optionalEnv("CODEX_GENERATION_ENABLED") !== "false" && hasCodexCredentials()) {
     return generateHtmlWithCodex(input);
@@ -170,6 +172,7 @@ async function generateWithCodex(input: {
 async function generateHtmlWithCodex(input: {
   markdown: string;
   notionUrl: string;
+  targetLanguage?: PageLanguage;
 }): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "notion-to-html-codex-"));
   const markdownPath = join(dir, "notion.md");
@@ -192,7 +195,7 @@ async function generateHtmlWithCodex(input: {
         dir,
         "-o",
         outputPath,
-        documentToHtmlPrompt(input.notionUrl, "artifact.html", input.markdown),
+        documentToHtmlPrompt(input.notionUrl, "artifact.html", input.markdown, input.targetLanguage ?? "auto"),
       ],
       {
         cwd: dir,
@@ -204,7 +207,13 @@ async function generateHtmlWithCodex(input: {
 
     const { stdout, stderr } = normalizeExecResult(result);
     const raw = await readCodexHtmlArtifact([artifactPath, outputPath], stdout, stderr);
-    return preserveGeneratedConnections(sanitizeGeneratedHtml(raw), input.markdown);
+    const html = preserveGeneratedConnections(sanitizeGeneratedHtml(raw), input.markdown);
+
+    if (!hasSourceCoverage(html, input.markdown)) {
+      return renderHtmlBody(documentFromMarkdown(input));
+    }
+
+    return html;
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -261,7 +270,12 @@ async function describeImageWithCodex(input: {
   }
 }
 
-function documentToHtmlPrompt(notionUrl: string, artifactFile: string, markdown: string): string {
+function documentToHtmlPrompt(
+  notionUrl: string,
+  artifactFile: string,
+  markdown: string,
+  targetLanguage: PageLanguage,
+): string {
   return [
     "Use the document-to-html skill to convert notion.md into a polished HTML page.",
     "Source URL:",
@@ -278,14 +292,16 @@ function documentToHtmlPrompt(notionUrl: string, artifactFile: string, markdown:
     "- Preserve all linked Notion subpages from notion.md. Include them as source links, related pages, appendix links, or detail rows, but do not drop the connection.",
     "- Use native <details class=\"x\"> rows for depth. The page should be skimmable first and expandable second.",
     "",
-    ...documentToHtmlLanguageGuidance(markdown),
+    ...sourceCoveragePromptLines(markdown),
+    "",
+    ...documentToHtmlLanguageGuidance(markdown, targetLanguage),
     "",
     "Document-to-html design language:",
     "- warm paper background, terracotta accent, warm near-black ink.",
     "- Archivo-style sans stack for prose and headings, JetBrains Mono-style stack for section labels, tags, KPI values, and table heads.",
     "- Section labels use numeric prefixes. For English pages, examples include 01 · THESIS, 02 · PRODUCT, 03 · TRACTION, 04 · RISKS. For Chinese pages, use Chinese labels such as 01 · 论点, 02 · 市场, 03 · 机会, 04 · 风险.",
     "- Use 3 to 5 sections. Put surface claims in hero, KPI rows, cards, charts, or visible summaries. Put reasoning in <details class=\"x\"> bodies.",
-    "- Prefer assertion headings over labels, written in the detected source language.",
+    "- Prefer assertion headings over labels, written in the output language.",
     "- Use one terracotta focal element per card or chart. Do not make the whole page orange.",
     "- Cut internal notes, self-coaching, QA prompts, and sensitive deal terms unless the source clearly frames them as public-facing.",
     "",
@@ -296,7 +312,104 @@ function documentToHtmlPrompt(notionUrl: string, artifactFile: string, markdown:
   ].join("\n");
 }
 
-function documentToHtmlLanguageGuidance(markdown: string): string[] {
+function sourceCoveragePromptLines(markdown: string): string[] {
+  const anchors = sourceCoverageAnchors(markdown).slice(0, 12);
+  if (anchors.length === 0) return [];
+
+  return [
+    "Source coverage requirements:",
+    "- Read notion.md directly before writing the artifact.",
+    "- Preserve concrete source entities, row names, URLs, and source facts. Do not write a generic page about the conversion task.",
+    "- The generated HTML must include several of these source anchors:",
+    ...anchors.map((anchor) => `  - ${anchor}`),
+  ];
+}
+
+function hasSourceCoverage(html: string, markdown: string): boolean {
+  const anchors = sourceCoverageAnchors(markdown).slice(0, 8);
+  if (anchors.length < 3) return true;
+
+  const haystack = normalizeCoverageText(
+    html
+      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+      .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+      .replace(/<[^>]+>/g, " "),
+  );
+  const matches = anchors.filter((anchor) => haystack.includes(normalizeCoverageText(anchor)));
+
+  return matches.length >= 2;
+}
+
+function sourceCoverageAnchors(markdown: string): string[] {
+  const anchors: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawLine of markdown.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || /^#{1,6}\s+/.test(line) || isLowSignalSourceLine(line)) continue;
+
+    const anchor = cleanCoverageAnchor(line);
+    const normalized = normalizeCoverageText(anchor);
+    if (!anchor || normalized.length < 3 || seen.has(normalized)) continue;
+    if (isLowSignalSourceLine(anchor)) continue;
+
+    anchors.push(anchor);
+    seen.add(normalized);
+    if (anchors.length >= 20) break;
+  }
+
+  return anchors;
+}
+
+function cleanCoverageAnchor(line: string): string {
+  return line
+    .replace(/!\[[^\]]*]\([^)]+\)/g, " ")
+    .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
+    .replace(/<Base64-Image-Removed>/gi, " ")
+    .replace(/[`*_>]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 100);
+}
+
+function isLowSignalSourceLine(line: string): boolean {
+  const normalized = normalizeCoverageText(line);
+  if (!normalized) return true;
+  if (/^https?:\/\//i.test(line)) return true;
+  if (/^!\[/.test(line)) return true;
+  if (/^[a-z]+:\/\/\S+$/i.test(line)) return true;
+  if (/^[A-Za-z]+\s+\d{1,2},\s+\d{4}/.test(line)) return true;
+  if (!/[\p{Script=Han}A-Za-z0-9]/u.test(line)) return true;
+
+  return new Set([
+    "table",
+    "group",
+    "name",
+    "description",
+    "url",
+    "category",
+    "created time",
+    "mentioned notion pages",
+    "images",
+    "page icon",
+    "skip to content",
+  ]).has(normalized);
+}
+
+function normalizeCoverageText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function documentToHtmlLanguageGuidance(markdown: string, targetLanguage: PageLanguage): string[] {
+  if (targetLanguage !== "auto") {
+    return selectedLanguageGuidance(targetLanguage);
+  }
+
   if (detectChineseSource(markdown)) {
     return [
       "Language contract:",
@@ -311,6 +424,37 @@ function documentToHtmlLanguageGuidance(markdown: string): string[] {
   return [
     "Language contract:",
     "- Preserve the dominant source language for generated prose, headings, summaries, labels, captions, details, chart text, and table framing.",
+    "- Keep proper nouns, company names, product names, tickers, URLs, and source quotes in their original form.",
+  ];
+}
+
+function selectedLanguageGuidance(targetLanguage: Exclude<PageLanguage, "auto">): string[] {
+  if (targetLanguage === "zh-CN") {
+    return [
+      "Language contract:",
+      "- Selected output language: Simplified Chinese.",
+      "- Write the generated page in Simplified Chinese, including prose, headings, summaries, labels, captions, details, chart text, and table framing.",
+      "- Translate source passages into clear Simplified Chinese when they are written in another language.",
+      "- Keep proper nouns, company names, product names, tickers, URLs, and source quotes in their original form.",
+      "- Put spaces between Chinese text and embedded English words or names.",
+    ];
+  }
+
+  if (targetLanguage === "ja") {
+    return [
+      "Language contract:",
+      "- Selected output language: Japanese.",
+      "- Write the generated page in Japanese, including prose, headings, summaries, labels, captions, details, chart text, and table framing.",
+      "- Translate source passages into clear Japanese when they are written in another language.",
+      "- Keep proper nouns, company names, product names, tickers, URLs, and source quotes in their original form.",
+    ];
+  }
+
+  return [
+    "Language contract:",
+    "- Selected output language: English.",
+    "- Write the generated page in English, including prose, headings, summaries, labels, captions, details, chart text, and table framing.",
+    "- Translate source passages into clear English when they are written in another language.",
     "- Keep proper nouns, company names, product names, tickers, URLs, and source quotes in their original form.",
   ];
 }

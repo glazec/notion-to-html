@@ -27,6 +27,7 @@ export async function servedPageResponse(page: PageRecord, requestUrl: string): 
       generationStep: displayPage.generation_step,
       generationProgress: displayPage.generation_progress,
       generationLog: displayPage.generation_log,
+      preferredLanguage: displayPage.preferred_language,
     });
 
     return htmlResponse(html);
@@ -37,6 +38,8 @@ export async function servedPageResponse(page: PageRecord, requestUrl: string): 
       title: page.status === "failed" ? "Generation failed" : "Generation in flight",
       notionUrl: page.notion_url,
       regeneratePath: `/api/pages/${page.page_key}/regenerate`,
+      languagePath: `/api/pages/${page.page_key}/language`,
+      preferredLanguage: displayPage.preferred_language,
       body: progressBodyHtml({
         status: displayPage.status,
         generationStep: displayPage.generation_step,

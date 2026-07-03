@@ -1,5 +1,5 @@
 import type { DocumentBlock, DocumentHtmlJson } from "@/lib/document";
-import type { GenerationLogEntry, PageStatus } from "@/lib/db";
+import type { GenerationLogEntry, PageLanguage, PageStatus } from "@/lib/db";
 
 export type ServedPageState = {
   status?: PageStatus;
@@ -29,9 +29,12 @@ export function wrapServedHtml(input: {
   body: string;
   notionUrl: string;
   regeneratePath: string;
+  languagePath?: string;
+  preferredLanguage?: PageLanguage;
   pageState?: ServedPageState;
 }): string {
   const htmlLang = detectServedHtmlLang(input.title, input.body);
+  const languagePath = input.languagePath ?? input.regeneratePath.replace(/\/regenerate$/, "/language");
 
   return `<!doctype html>
 <html lang="${htmlLang}">
@@ -45,7 +48,7 @@ export function wrapServedHtml(input: {
 </head>
 <body>
 ${input.body}
-${toolbarHtml(input.notionUrl, input.regeneratePath, input.pageState)}
+${toolbarHtml(input.notionUrl, input.regeneratePath, languagePath, input.pageState, htmlLang, input.preferredLanguage ?? "auto")}
 </body>
 </html>`;
 }
@@ -104,7 +107,10 @@ function renderTable(rows: string[][]): string {
 function toolbarHtml(
   notionUrl: string,
   regeneratePath: string,
+  languagePath: string,
   pageState: ServedPageState | undefined,
+  htmlLang: "en" | "zh-CN",
+  preferredLanguage: PageLanguage,
 ): string {
   const freshness = freshnessLabel(pageState?.generatedAt);
   const progress = normalizedProgress(pageState);
@@ -126,6 +132,14 @@ function toolbarHtml(
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/><path d="M3 12A9 9 0 0 1 18.5 5.8L21 8"/><path d="M21 3v5h-5"/></svg>
     </button>
   </span>
+  <div class="nth-toolbar-menu" data-toolbar-menu data-open="false">
+    <span class="nth-tool-wrap" data-tooltip="More tools">
+      <button class="nth-tool" type="button" aria-label="More tools" data-toolbar-menu-open aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5h.01"/><path d="M12 12h.01"/><path d="M12 19h.01"/></svg>
+      </button>
+    </span>
+    ${languageMenuHtml(languagePath, htmlLang, preferredLanguage)}
+  </div>
 </div>
 <dialog class="nth-dialog" id="nth-refresh-dialog">
   <form method="dialog" class="nth-dialog-close-form">
@@ -148,6 +162,12 @@ function toolbarHtml(
   const form = document.getElementById("nth-refresh-form");
   const progressDetails = document.querySelector("[data-progress-details]");
   const progressToggle = document.querySelector("[data-progress-toggle]");
+  const toolbarMenu = document.querySelector("[data-toolbar-menu]");
+  const toolbarMenuOpen = document.querySelector("[data-toolbar-menu-open]");
+  const setToolbarMenuOpen = (openMenu) => {
+    toolbarMenu?.setAttribute("data-open", String(openMenu));
+    toolbarMenuOpen?.setAttribute("aria-expanded", String(openMenu));
+  };
   progressToggle?.addEventListener("click", () => {
     const isOpen = progressDetails?.getAttribute("data-open") === "true";
     progressDetails?.setAttribute("data-open", String(!isOpen));
@@ -159,6 +179,21 @@ function toolbarHtml(
       progressToggle?.setAttribute("aria-expanded", "false");
     }
   });
+  toolbarMenuOpen?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const isOpen = toolbarMenu?.getAttribute("data-open") === "true";
+    setToolbarMenuOpen(!isOpen);
+  });
+  toolbarMenu?.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  toolbarMenu?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      setToolbarMenuOpen(false);
+      toolbarMenuOpen?.focus();
+    }
+  });
+  document.addEventListener("click", () => setToolbarMenuOpen(false));
   open?.addEventListener("click", () => {
     if (dialog && typeof dialog.showModal === "function") {
       dialog.showModal();
@@ -170,6 +205,36 @@ function toolbarHtml(
   });
 })();
 </script>`;
+}
+
+function languageMenuHtml(
+  languagePath: string,
+  htmlLang: "en" | "zh-CN",
+  preferredLanguage: PageLanguage,
+): string {
+  const originalLabel = htmlLang === "zh-CN" ? "原文" : "Original";
+  const options: Array<{ value: PageLanguage; label: string }> = [
+    { value: "auto", label: originalLabel },
+    { value: "en", label: "English" },
+    { value: "zh-CN", label: "简体中文" },
+    { value: "ja", label: "日本語" },
+  ];
+
+  return `<div class="nth-menu-panel" role="menu" aria-label="Language" data-language-menu>
+      <strong>Language</strong>
+      <form class="nth-language-options" action="${escapeAttribute(languagePath)}" method="post">
+        ${options.map((option) => languageOptionHtml(option, preferredLanguage)).join("")}
+      </form>
+    </div>`;
+}
+
+function languageOptionHtml(
+  option: { value: PageLanguage; label: string },
+  preferredLanguage: PageLanguage,
+): string {
+  const selected = option.value === preferredLanguage;
+
+  return `<button class="nth-language-option" type="submit" role="menuitem" name="language" value="${escapeAttribute(option.value)}" data-language-code="${escapeAttribute(option.value)}"${selected ? ' aria-current="true"' : ""}>${escapeHtml(option.label)}</button>`;
 }
 
 function toolbarProgressHtml(pageState: ServedPageState | undefined, freshness: string): string {
@@ -334,9 +399,17 @@ pre { overflow: auto; padding: 16px; border: 1px solid var(--line); border-radiu
 .nth-tool-wrap { position: relative; display: inline-grid; place-items: center; }
 .nth-tool-wrap::after { content: attr(data-tooltip); position: absolute; right: 0; bottom: calc(100% + 8px); pointer-events: none; opacity: 0; transform: translateY(4px); transition: opacity .15s ease, transform .15s ease; white-space: nowrap; border: 1px solid #d4d4d4; border-radius: 6px; background: var(--fg); color: #fff; padding: 6px 8px; font-size: 12px; box-shadow: 0 8px 18px rgba(0,0,0,.14); }
 .nth-tool-wrap:hover::after, .nth-tool-wrap:focus-within::after { opacity: 1; transform: translateY(0); }
+.nth-toolbar-menu { position: relative; display: inline-grid; place-items: center; }
 .nth-tool { width: 36px; height: 36px; border: 0; border-radius: 6px; color: var(--fg); background: transparent; display: grid; place-items: center; cursor: pointer; }
 .nth-tool:hover { background: var(--soft); }
 .nth-tool svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.nth-menu-panel { position: absolute; right: 0; bottom: calc(100% + 10px); width: 220px; padding: 10px; border: 1px solid #d4d4d4; border-radius: 8px; background: #fff; box-shadow: 0 18px 46px rgba(0,0,0,.18); opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(4px); transition: opacity .15s ease, transform .15s ease, visibility .15s ease; }
+.nth-toolbar-menu[data-open="true"] .nth-menu-panel { opacity: 1; visibility: visible; pointer-events: auto; transform: translateY(0); }
+.nth-menu-panel strong { display: block; padding: 2px 4px 8px; color: var(--muted); font-size: 12px; line-height: 1.3; }
+.nth-language-options { display: grid; gap: 2px; }
+.nth-language-option { width: 100%; min-height: 34px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: var(--fg); cursor: pointer; font: inherit; font-size: 13px; text-align: left; }
+.nth-language-option:hover { background: var(--soft); }
+.nth-language-option[aria-current="true"] { color: var(--muted); background: var(--soft); }
 .nth-dialog { width: min(420px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 8px; padding: 22px; color: var(--fg); background: #fff; box-shadow: 0 28px 80px rgba(0,0,0,.24); }
 .nth-dialog::backdrop { background: rgba(0,0,0,.28); }
 .nth-dialog h2 { margin: 0; font-size: 22px; line-height: 1.25; }
@@ -349,7 +422,7 @@ pre { overflow: auto; padding: 16px; border: 1px solid var(--line); border-radiu
 .nth-dialog-primary, .nth-dialog-secondary { height: 38px; border-radius: 6px; padding: 0 14px; cursor: pointer; }
 .nth-dialog-primary { border: 1px solid var(--fg); background: var(--fg); color: #fff; }
 .nth-dialog-secondary { border: 1px solid var(--line); background: #fff; color: var(--fg); }
-@media (max-width: 640px) { .nth-document { width: min(100% - 28px, 860px); padding-top: 24px; } .nth-freshness { max-width: 116px; overflow: hidden; text-overflow: ellipsis; } .nth-progress-panel { width: min(340px, calc(100vw - 36px)); } .nth-log-list li { grid-template-columns: 1fr auto; } .nth-log-list time { display: none; } }
+@media (max-width: 640px) { .nth-document { width: min(100% - 28px, 860px); padding-top: 24px; } .nth-freshness { max-width: 116px; overflow: hidden; text-overflow: ellipsis; } .nth-progress-panel, .nth-menu-panel { width: min(340px, calc(100vw - 36px)); } .nth-log-list li { grid-template-columns: 1fr auto; } .nth-log-list time { display: none; } }
 `;
 }
 

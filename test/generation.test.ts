@@ -140,6 +140,32 @@ describe("page generation", () => {
     expect(steps).toContain("Publishing cached HTML object");
   });
 
+  it("passes the page language preference into Codex HTML generation", async () => {
+    findPage.mockResolvedValue({
+      page_key: "abc123",
+      notion_url: "https://notion.so/test",
+      preferred_language: "zh-CN",
+    });
+    fetchSourceContent.mockResolvedValue({
+      markdown: "# Hello\n\nEnglish source.",
+      url: "https://notion.so/test",
+      pageId: "page-id",
+      sourceName: "Notion API",
+      commentCount: 0,
+      discussionCount: 0,
+    });
+    generateDocumentHtmlBody.mockResolvedValue("<main>生成内容</main>");
+
+    const { generatePage } = await import("@/lib/generation");
+    await generatePage("abc123");
+
+    expect(generateDocumentHtmlBody).toHaveBeenCalledWith(expect.objectContaining({
+      markdown: "# Hello\n\nEnglish source.",
+      notionUrl: "https://notion.so/test",
+      targetLanguage: "zh-CN",
+    }));
+  });
+
   it("does not publish HTML when the Notion source is inaccessible", async () => {
     const accessMessage = "Notion page is not accessible. No website was generated. To fix it: open the page in Notion, click Share, publish it to web, or share it with the configured Notion integration and ensure the page id is in NOTION_PUBLIC_NOTION_API_PAGE_ALLOWLIST. Then regenerate.";
     findPage.mockResolvedValue({

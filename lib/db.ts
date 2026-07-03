@@ -8,6 +8,7 @@ let schemaReady: Promise<void> | undefined;
 const schemaLockSql = "select pg_advisory_xact_lock(836491, 20260630)";
 
 export type PageStatus = "queued" | "generating" | "ready" | "failed";
+export type PageLanguage = "auto" | "en" | "zh-CN" | "ja";
 
 export type GenerationLogEntry = {
   at: string;
@@ -29,6 +30,7 @@ export type PageRecord = {
   generation_progress: number;
   generation_log: GenerationLogEntry[];
   user_transformed_at: Date | null;
+  preferred_language: PageLanguage;
   last_error: string | null;
   created_at: Date;
   updated_at: Date;
@@ -90,7 +92,8 @@ async function migrateSchema(): Promise<void> {
       add column if not exists generation_step text,
       add column if not exists generation_progress integer not null default 0,
       add column if not exists generation_log jsonb not null default '[]'::jsonb,
-      add column if not exists user_transformed_at timestamptz;
+      add column if not exists user_transformed_at timestamptz,
+      add column if not exists preferred_language text not null default 'auto';
 
     update pages
       set slug = page_key

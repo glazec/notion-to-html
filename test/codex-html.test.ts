@@ -117,6 +117,80 @@ describe("Codex document-to-html generation", () => {
     vi.unstubAllEnvs();
   });
 
+  it("falls back to source rendering when Codex drops database row content", async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+
+    vi.doMock("node:child_process", () => ({
+      execFile: (
+        _file: string,
+        args: string[],
+        _options: { timeout?: number },
+        callback: (error: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        const outputPath = args[args.indexOf("-o") + 1];
+        writeFileSync(outputPath, [
+          "<style data-document-to-html>:root { --bg: #fff; }</style>",
+          "<main class=\"document-html-page wrap\">",
+          "<section class=\"hero\"><h1>Toolbox</h1><p>The available source material is limited.</p></section>",
+          "</main>",
+        ].join("\n"));
+        callback(null, "", "");
+        return { stdin: { end: vi.fn() } };
+      },
+    }));
+
+    const { generateDocumentHtmlBody } = await import("@/lib/codex-generator");
+    const body = await generateDocumentHtmlBody({
+      notionUrl: "https://app.notion.com/p/homeless20/8ddb379e60aa4deb8ef4f730fe96dfba",
+      markdown: [
+        "# Toolbox",
+        "",
+        "Table",
+        "",
+        "Group",
+        "",
+        "Name",
+        "",
+        "Description",
+        "",
+        "URL",
+        "",
+        "Category",
+        "",
+        "Created time",
+        "",
+        "iroh",
+        "",
+        "拨号密钥而非 IP，给你的 App 装上点对点连接的网络库",
+        "",
+        "[iroh.computer](https://www.iroh.computer/)",
+        "",
+        "web",
+        "",
+        "June 30, 2026 11:20 PM",
+        "",
+        "Collect UI",
+        "",
+        "每日更新的 UI 设计灵感集合，适合快速寻找界面参考。",
+        "",
+        "[collectui.com/](https://collectui.com/)",
+        "",
+        "design",
+        "",
+        "June 24, 2026 6:20 PM",
+      ].join("\n"),
+    });
+
+    expect(body).toContain("iroh");
+    expect(body).toContain("Collect UI");
+    expect(body).toContain("拨号密钥");
+    expect(body).not.toContain("available source material is limited");
+
+    vi.unstubAllEnvs();
+  });
+
   it("tells Codex to keep Chinese source pages in Chinese", async () => {
     vi.resetModules();
     vi.unstubAllEnvs();
@@ -150,6 +224,44 @@ describe("Codex document-to-html generation", () => {
     expect(prompt).toContain("Detected source language: Simplified Chinese");
     expect(prompt).toContain("Write the generated page in Simplified Chinese");
     expect(prompt).toContain("Do not translate Chinese source passages into English");
+
+    vi.unstubAllEnvs();
+  });
+
+  it("tells Codex to use the selected language instead of auto detecting source language", async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+
+    let prompt = "";
+    vi.doMock("node:child_process", () => ({
+      execFile: (
+        _file: string,
+        args: string[],
+        _options: { timeout?: number },
+        callback: (error: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        prompt = args.at(-1) ?? "";
+        const outputPath = args[args.indexOf("-o") + 1];
+        writeFileSync(outputPath, [
+          "<style data-document-to-html>:root { --bg: #fff; }</style>",
+          "<main class=\"document-html-page wrap\"><section class=\"hero\"><h1>Silicon Valley and Asian early capital</h1></section></main>",
+        ].join("\n"));
+        callback(null, "", "");
+        return { stdin: { end: vi.fn() } };
+      },
+    }));
+
+    const { generateDocumentHtmlBody } = await import("@/lib/codex-generator");
+    await generateDocumentHtmlBody({
+      notionUrl: "https://notion.so/test",
+      markdown: "# 硅谷与亚洲早期资本\n\n早期资本正在形成哑铃结构。",
+      targetLanguage: "en",
+    });
+
+    expect(prompt).toContain("Selected output language: English.");
+    expect(prompt).toContain("Write the generated page in English");
+    expect(prompt).not.toContain("Detected source language: Simplified Chinese");
 
     vi.unstubAllEnvs();
   });

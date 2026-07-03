@@ -54,6 +54,29 @@ describe("HTML rendering", () => {
     expect(html).toContain('<html lang="zh-CN">');
   });
 
+  it("keeps the original served language and hides language choices in the toolbar menu", () => {
+    const html = wrapServedHtml({
+      title: "硅谷与亚洲早期资本",
+      notionUrl: "https://notion.so/test",
+      regeneratePath: "/api/pages/abc/regenerate",
+      languagePath: "/api/pages/abc/language",
+      body: "<main><h1>硅谷与亚洲早期资本</h1><p>早期资本正在形成哑铃结构。</p></main>",
+      pageState: {
+        status: "ready",
+        generatedAt: new Date(),
+      },
+    });
+
+    expect(html).toContain('<html lang="zh-CN">');
+    expect(html).toContain('data-toolbar-menu-open');
+    expect(html).toContain('data-language-menu');
+    expect(html).toContain('data-language-code="en"');
+    expect(html).toContain('data-language-code="zh-CN"');
+    expect(html).toContain('action="/api/pages/abc/language"');
+    expect(html).toContain('name="language" value="en"');
+    expect(html).not.toContain("translate.google.com");
+  });
+
   it("renders images and rewrites Notion links through the generator", () => {
     const document = documentFromMarkdown({
       notionUrl: "https://notion.so/test",

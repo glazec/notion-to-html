@@ -35,6 +35,7 @@ function page(overrides: Partial<PageRecord> = {}): PageRecord {
     generation_progress: 100,
     generation_log: [],
     user_transformed_at: now,
+    preferred_language: "auto",
     last_error: null,
     created_at: now,
     updated_at: now,

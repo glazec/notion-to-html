@@ -8,7 +8,7 @@ import {
 import { generateDocumentHtmlBody } from "@/lib/codex-generator";
 import { fetchSourceContent } from "@/lib/content-source";
 import { documentFromMarkdown } from "@/lib/document";
-import type { GenerationLogEntry } from "@/lib/db";
+import type { GenerationLogEntry, PageLanguage } from "@/lib/db";
 import { prepareSourceAssets } from "@/lib/source-assets";
 import { wrapServedHtml } from "@/lib/render-html";
 import { sha256 } from "@/lib/hash";
@@ -119,6 +119,7 @@ export async function generatePage(pageKey: string): Promise<{
       () => generateDocumentHtmlBody({
         markdown: preparedSource.markdown,
         notionUrl: source.url,
+        targetLanguage: page.preferred_language ?? "auto",
       }),
     );
     const contentHash = sha256(body);
@@ -216,6 +217,7 @@ export async function buildServedHtml(input: {
   generationStep?: string | null;
   generationProgress?: number | null;
   generationLog?: GenerationLogEntry[] | null;
+  preferredLanguage?: PageLanguage;
 }): Promise<string> {
   const body = await getHtmlObject(input.objectKey);
   return wrapServedHtml({
@@ -223,6 +225,8 @@ export async function buildServedHtml(input: {
     body,
     notionUrl: input.notionUrl,
     regeneratePath: `/api/pages/${input.pageKey}/regenerate`,
+    languagePath: `/api/pages/${input.pageKey}/language`,
+    preferredLanguage: input.preferredLanguage ?? "auto",
     pageState: {
       status: input.status,
       generationStep: input.generationStep,

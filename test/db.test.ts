@@ -39,4 +39,33 @@ describe("database schema", () => {
     await expect(ensureSchema()).resolves.toBeUndefined();
     expect(failedOnce).toBe(true);
   });
+
+  it("migrates pages with an auto language preference by default", async () => {
+    vi.stubEnv("DATABASE_URL", "postgresql://user:pass@localhost:5432/app");
+
+    const statements: string[] = [];
+    const query = vi.fn(async (sql: string) => {
+      statements.push(sql);
+      return { rows: [] };
+    });
+
+    const client = {
+      query,
+      release: vi.fn(),
+    };
+
+    class FakePool {
+      query = query;
+      connect = vi.fn(async () => client);
+    }
+
+    vi.doMock("pg", () => ({
+      default: { Pool: FakePool },
+    }));
+
+    const { ensureSchema } = await import("@/lib/db");
+    await ensureSchema();
+
+    expect(statements.join("\n")).toContain("preferred_language text not null default 'auto'");
+  });
 });

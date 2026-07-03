@@ -1,4 +1,4 @@
-import { ArrowRight, ExternalLink, FileText, RefreshCw, Search } from "lucide-react";
+import { ArrowRight, ExternalLink, FileText, MoreVertical, RefreshCw, Search } from "lucide-react";
 import type { PageRecord } from "@/lib/db";
 import { listRecentPages } from "@/lib/page-store";
 
@@ -97,6 +97,9 @@ export default async function HomePage() {
           </span>
           <span className="icon-button">
             <RefreshCw size={17} />
+          </span>
+          <span className="icon-button">
+            <MoreVertical size={17} />
           </span>
         </div>
       </section>

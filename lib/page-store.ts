@@ -1,5 +1,5 @@
 import type { DocumentHtmlJson } from "@/lib/document";
-import type { GenerationLogEntry, PageRecord, PageStatus } from "@/lib/db";
+import type { GenerationLogEntry, PageLanguage, PageRecord, PageStatus } from "@/lib/db";
 import { query } from "@/lib/db";
 import { isNotionUrl, parseNotionPageId, slugFromNotionUrl } from "@/lib/notion";
 
@@ -16,6 +16,10 @@ export class InvalidNotionUrlError extends Error {
     super(message);
     this.name = "InvalidNotionUrlError";
   }
+}
+
+export function isPageLanguage(value: unknown): value is PageLanguage {
+  return value === "auto" || value === "en" || value === "zh-CN" || value === "ja";
 }
 
 export function isInvalidNotionUrlError(error: unknown): error is InvalidNotionUrlError {
@@ -198,6 +202,39 @@ export async function markPageDirty(pageKey: string, dirtyAt: Date): Promise<Pag
       pageKey,
       dirtyAt,
       JSON.stringify(generationLogEntry("queued", "Queued for regeneration", 0, dirtyAt)),
+    ],
+  );
+
+  if (!rows[0]) {
+    throw new Error(`Page not found: ${pageKey}`);
+  }
+
+  return rows[0];
+}
+
+export async function setPagePreferredLanguage(
+  pageKey: string,
+  language: PageLanguage,
+  dirtyAt: Date,
+): Promise<PageRecord> {
+  const rows = await query<PageRecord>(
+    `
+      update pages
+      set preferred_language = $2,
+          dirty_at = $3,
+          status = 'queued',
+          generation_step = 'Queued for language update',
+          generation_progress = 0,
+          generation_log = jsonb_build_array($4::jsonb),
+          updated_at = now()
+      where page_key = $1
+      returning *
+    `,
+    [
+      pageKey,
+      language,
+      dirtyAt,
+      JSON.stringify(generationLogEntry("queued", "Queued for language update", 0, dirtyAt)),
     ],
   );
 
