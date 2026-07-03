@@ -51,6 +51,8 @@ describe("Codex document-to-html generation", () => {
     expect(prompt).toContain("warm paper");
     expect(prompt).toContain("terracotta");
     expect(prompt).toContain("details class=\"x\"");
+    expect(prompt).not.toMatch(/font-size:\s*[^;]*vw/i);
+    expect(prompt).not.toMatch(/letter-spacing:\s*-/i);
     expect(calls[0].options.timeout).toBeGreaterThanOrEqual(10 * 60 * 1000);
     expect(calls[0].options.env?.CODEX_ACCESS_TOKEN).toBe("token");
     expect(calls[0].options.env?.CODEX_HOME).toContain("notion-to-html-codex-");
@@ -187,6 +189,70 @@ describe("Codex document-to-html generation", () => {
     expect(body).toContain("Collect UI");
     expect(body).toContain("拨号密钥");
     expect(body).not.toContain("available source material is limited");
+
+    vi.unstubAllEnvs();
+  });
+
+  it("passes Notion database generation rules to Codex for table exports", async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+
+    let prompt = "";
+    vi.doMock("node:child_process", () => ({
+      execFile: (
+        _file: string,
+        args: string[],
+        _options: { timeout?: number },
+        callback: (error: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        prompt = args.at(-1) ?? "";
+        const outputPath = args[args.indexOf("-o") + 1];
+        writeFileSync(outputPath, [
+          "<style data-document-to-html>:root { --bg: #fff; }</style>",
+          "<main class=\"document-html-page wrap\"><section class=\"hero\"><h1>Toolbox</h1></section></main>",
+        ].join("\n"));
+        callback(null, "", "");
+        return { stdin: { end: vi.fn() } };
+      },
+    }));
+
+    const { generateDocumentHtmlBody } = await import("@/lib/codex-generator");
+    await generateDocumentHtmlBody({
+      notionUrl: "https://app.notion.com/p/homeless20/8ddb379e60aa4deb8ef4f730fe96dfba?v=1ede54c010fe47f6b0fc1ee1b5d31fc7",
+      markdown: [
+        "# Toolbox",
+        "",
+        "Table",
+        "",
+        "Name",
+        "",
+        "Description",
+        "",
+        "URL",
+        "",
+        "Category",
+        "",
+        "Created time",
+        "",
+        "iroh",
+        "",
+        "拨号密钥而非 IP，给你的 App 装上点对点连接的网络库",
+        "",
+        "[iroh.computer](https://www.iroh.computer/)",
+        "",
+        "web",
+        "",
+        "June 30, 2026 11:20 PM",
+      ].join("\n"),
+    });
+
+    expect(prompt).toContain("Notion database/table generation requirements:");
+    expect(prompt).toContain("Keep the landing hero");
+    expect(prompt).toContain("Render every available database row");
+    expect(prompt).toContain("Row title links should point to generated HTML subpage routes");
+    expect(prompt).toContain("Notion row");
+    expect(prompt).toContain("Do not classify Notion icons, emoji assets, /icons/, /images/, or same-page anchors as linked subpages");
 
     vi.unstubAllEnvs();
   });

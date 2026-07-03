@@ -116,6 +116,24 @@ describe("HTML rendering", () => {
     expect(body).toContain("<td>Stablecoin infrastructure</td>");
   });
 
+  it("renders fenced code blocks without leaking raw backticks", () => {
+    const document = documentFromMarkdown({
+      notionUrl: "https://notion.so/test",
+      markdown: [
+        "# SDK Notes",
+        "Install with:",
+        "```bash",
+        "npm install instructor",
+        "```",
+      ].join("\n"),
+    });
+
+    const body = renderHtmlBody(document);
+
+    expect(body).toContain("<pre><code>npm install instructor</code></pre>");
+    expect(body).not.toContain("```");
+  });
+
   it("renders generation progress state", () => {
     const body = progressBodyHtml({
       status: "generating",

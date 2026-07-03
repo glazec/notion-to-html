@@ -292,6 +292,8 @@ function documentToHtmlPrompt(
     "- Preserve all linked Notion subpages from notion.md. Include them as source links, related pages, appendix links, or detail rows, but do not drop the connection.",
     "- Use native <details class=\"x\"> rows for depth. The page should be skimmable first and expandable second.",
     "",
+    ...notionDatabasePromptLines(notionUrl, markdown),
+    "",
     ...sourceCoveragePromptLines(markdown),
     "",
     ...documentToHtmlLanguageGuidance(markdown, targetLanguage),
@@ -310,6 +312,39 @@ function documentToHtmlPrompt(
     "",
     "Build a complete page from notion.md. If the document has quantitative content, use KPI cards, a small chart, or a table. If it has a mechanism, use a simple token-driven SVG concept diagram. Every major claim should have an expandable detail row.",
   ].join("\n");
+}
+
+function notionDatabasePromptLines(notionUrl: string, markdown: string): string[] {
+  if (!looksLikeNotionDatabase(notionUrl, markdown)) return [];
+
+  return [
+    "Notion database/table generation requirements:",
+    "- Keep the landing hero. A database page still needs a readable front door with title, source URL, row counts, and section navigation.",
+    "- Render every available database row. A curated subset is only acceptable when the user explicitly asks for a digest.",
+    "- Use the database shape: hero with row stats -> 01 overview/thesis -> 02 latest/featured rows -> 03 all entries table with search/filter -> optional category summary.",
+    "- Row title links should point to generated HTML subpage routes, using /api/pages?notionUrl=<encoded Notion row URL> when row URLs are available.",
+    "- Add a small \"Notion row\" link for the original source row when a row URL is available.",
+    "- Keep product or external URLs in their own column instead of replacing the row title link.",
+    "- Convert markdown links, bold text, lists, headings, and fenced code before writing table cells. Visible raw markdown is a bug.",
+    "- Use .md containers and overflow-wrap:anywhere for long descriptions, URLs, package names, and identifiers.",
+    "- Do not classify Notion icons, emoji assets, /icons/, /images/, or same-page anchors as linked subpages.",
+    "- Keep plain tables when columns carry meaning. Do not try to make <tr> expandable; put native <details> inside a description cell or below the table if needed.",
+  ];
+}
+
+function looksLikeNotionDatabase(notionUrl: string, markdown: string): boolean {
+  const normalized = markdown.toLowerCase();
+  const hasNotionViewUrl = /[?&]v=[0-9a-f-]{8,}/i.test(notionUrl);
+  const hasDatabaseWord = /\bdatabase\b|\btable\b|collection view/i.test(markdown);
+  const hasCoreColumns = [
+    /^name$/im,
+    /^description$/im,
+    /^url$/im,
+    /^category$/im,
+    /^created time$/im,
+  ].filter((pattern) => pattern.test(markdown)).length >= 3;
+
+  return hasNotionViewUrl || (hasDatabaseWord && hasCoreColumns) || normalized.includes("notion database");
 }
 
 function sourceCoveragePromptLines(markdown: string): string[] {
@@ -604,23 +639,26 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); line
 .wrap { max-width: 1120px; margin: 0 auto; padding: 64px 40px 80px; }
 .hero { padding: 48px 0 56px; border-bottom: 1px solid var(--text); }
 .brand { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; color: var(--accent-ink); font-weight: 600; text-transform: uppercase; margin-bottom: 24px; }
-h1 { font-size: clamp(34px, 5vw, 54px); line-height: 1.08; font-weight: 700; letter-spacing: -.02em; margin-bottom: 20px; }
+h1 { font-size: 48px; line-height: 1.08; font-weight: 700; letter-spacing: 0; margin-bottom: 20px; }
 h1 .hl { color: var(--accent); }
-.hero-tagline { font-size: clamp(17px, 2vw, 21px); color: var(--text-soft); max-width: 760px; line-height: 1.5; }
+.hero-tagline { font-size: 20px; color: var(--text-soft); max-width: 760px; line-height: 1.5; }
 .hero-tagline b { color: var(--accent-ink); font-weight: 600; }
 section { padding: 56px 0; border-bottom: 1px solid var(--border); }
 .shead { display: flex; align-items: baseline; gap: 14px; margin-bottom: 14px; }
 .sec-label { font-family: var(--mono); font-size: 12.5px; letter-spacing: .06em; color: var(--accent-ink); font-weight: 700; text-transform: uppercase; }
-h2 { font-size: clamp(24px, 3vw, 32px); font-weight: 700; letter-spacing: -.01em; }
+h2 { font-size: 30px; font-weight: 700; letter-spacing: 0; }
 .lede { font-size: 17px; color: var(--text-soft); max-width: 820px; margin-bottom: 36px; }
 .lede b { color: var(--text); font-weight: 600; }
 a { color: var(--accent-ink); text-decoration: none; }
+pre { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.55; color: var(--text); }
+code { font-family: var(--mono); font-size: .9em; background: var(--surface); border: 1px solid var(--border); padding: 1px 5px; border-radius: 4px; }
+pre code { background: transparent; border: 0; padding: 0; font-size: inherit; }
 .story { background: var(--surface); border-left: 3px solid var(--accent); padding: 28px 32px; border-radius: 0 12px 12px 0; margin-bottom: 36px; font-size: 16.5px; color: var(--text-soft); line-height: 1.7; }
 .story b { color: var(--accent-ink); font-weight: 600; }
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 18px; margin-bottom: 24px; }
 .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px; text-align: center; }
 .kpi.focal { border-color: var(--accent); }
-.kpi .n { font-family: var(--mono); font-size: 34px; font-weight: 700; letter-spacing: -.02em; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.kpi .n { font-family: var(--mono); font-size: 34px; font-weight: 700; letter-spacing: 0; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .kpi.focal .n { color: var(--accent-ink); }
 .kpi .l { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
 .geo-grid, .dir-grid, .edge-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 28px; }
@@ -629,10 +667,10 @@ a { color: var(--accent-ink); text-decoration: none; }
 .geo.hot, .kpi.focal { border-color: var(--accent); background: linear-gradient(180deg, var(--accent-soft), var(--surface)); }
 .tag, .pill { display: inline-block; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; padding: 4px 10px; border-radius: 99px; margin: 2px 4px 14px 0; font-weight: 600; text-transform: uppercase; background: var(--surface2); color: var(--muted); }
 .tag.open, .pill.f { background: var(--accent); border-color: var(--accent); color: #fff; }
-.geo h3, .dir h3, .edge h3 { font-size: 20px; font-weight: 700; letter-spacing: -.01em; margin-bottom: 8px; }
+.geo h3, .dir h3, .edge h3 { font-size: 20px; font-weight: 700; letter-spacing: 0; margin-bottom: 8px; }
 .geo p, .dir p, .edge p { font-size: 14.5px; color: var(--text-soft); }
 .geo p b, .dir p b, .edge p b { color: var(--text); font-weight: 600; }
-.punch { font-size: 22px; font-weight: 700; letter-spacing: -.01em; text-align: center; padding: 28px; background: var(--surface2); border-radius: 12px; line-height: 1.4; }
+.punch { font-size: 22px; font-weight: 700; letter-spacing: 0; text-align: center; padding: 28px; background: var(--surface2); border-radius: 12px; line-height: 1.4; }
 .punch b { color: var(--accent-ink); }
 .expand-hint { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: .04em; }
 details.x { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 10px 0; overflow: hidden; transition: border-color .2s; }
@@ -653,7 +691,7 @@ table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-nu
 thead th { text-align: left; font-family: var(--mono); font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: 12px 14px; border-bottom: 2px solid var(--border); font-weight: 600; }
 tbody td { padding: 14px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--text-soft); }
 tbody td:first-child { color: var(--text); font-weight: 600; }
-.chart-title { font-size: 17px; font-weight: 700; letter-spacing: -.01em; margin-bottom: 16px; }
+.chart-title { font-size: 17px; font-weight: 700; letter-spacing: 0; margin-bottom: 16px; }
 .hbar { display: grid; gap: 10px; }
 .hbar .row { display: grid; grid-template-columns: 140px 1fr 70px; align-items: center; gap: 12px; font-size: 13.5px; }
 .hbar .label { color: var(--text); font-weight: 600; text-align: right; }
@@ -663,10 +701,13 @@ tbody td:first-child { color: var(--text); font-weight: 600; }
 .hbar .val { color: var(--muted); font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .diagram { width: 100%; height: auto; display: block; }
 .closing { text-align: center; padding: 72px 0 24px; border-bottom: none; }
-.closing .line { font-size: 28px; font-weight: 700; line-height: 1.45; letter-spacing: -.01em; max-width: 800px; margin: 0 auto 16px; }
+.closing .line { font-size: 28px; font-weight: 700; line-height: 1.45; letter-spacing: 0; max-width: 800px; margin: 0 auto 16px; }
 .closing .line b { color: var(--accent-ink); }
 @media (max-width: 860px) {
   .wrap { padding: 40px 20px 60px; }
+  h1 { font-size: 34px; }
+  h2 { font-size: 24px; }
+  .hero-tagline { font-size: 17px; }
   .geo-grid, .dir-grid, .edge-grid { grid-template-columns: 1fr; }
   thead { display: none; } tbody td { display: block; border: none; padding: 4px 14px; } tbody tr { border-bottom: 1px solid var(--border); padding: 10px 0; }
 }

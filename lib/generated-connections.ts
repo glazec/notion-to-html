@@ -1,4 +1,4 @@
-import { isNotionUrl } from "@/lib/notion";
+import { isNotionUrl, parseNotionPageId } from "@/lib/notion";
 
 type MarkdownImageConnection = {
   alt: string;
@@ -31,7 +31,7 @@ export function preserveGeneratedConnections(html: string, sourceMarkdown: strin
 
 function rewriteNotionHrefAttributes(html: string): string {
   return html.replace(/\shref=(["'])(https?:\/\/[^"']*notion[^"']*)\1/gi, (match, quote: string, url: string) => {
-    if (!isNotionUrl(url)) return match;
+    if (!isRoutableNotionPageUrl(url)) return match;
     return ` href=${quote}${localNotionHref(url)}${quote}`;
   });
 }
@@ -90,11 +90,12 @@ function extractImageConnections(markdown: string): MarkdownImageConnection[] {
 
 function extractNotionLinks(markdown: string): NotionLinkConnection[] {
   return [...markdown.matchAll(markdownLinkPattern)]
+    .filter((match) => markdown[(match.index ?? 0) - 1] !== "!")
     .map((match) => ({
       label: match[1]?.trim() || match[2],
       url: match[2],
     }))
-    .filter((link) => isNotionUrl(link.url));
+    .filter((link) => isRoutableNotionPageUrl(link.url, link.label));
 }
 
 function uniqueLinks(links: NotionLinkConnection[]): NotionLinkConnection[] {
@@ -108,6 +109,28 @@ function uniqueLinks(links: NotionLinkConnection[]): NotionLinkConnection[] {
 
 function localNotionHref(url: string): string {
   return `/api/pages?notionUrl=${encodeURIComponent(url)}`;
+}
+
+function isRoutableNotionPageUrl(url: string, label = ""): boolean {
+  if (!isNotionUrl(url) || isNotionUtilityUrl(url, label)) return false;
+
+  try {
+    parseNotionPageId(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isNotionUtilityUrl(url: string, label: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const pathname = parsed.pathname.toLowerCase();
+    if (pathname.startsWith("/icons/") || pathname.startsWith("/images/")) return true;
+    return parsed.hash.toLowerCase() === "#main" && label.toLowerCase().includes("skip");
+  } catch {
+    return false;
+  }
 }
 
 function escapeHtml(value: string): string {

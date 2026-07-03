@@ -41,6 +41,20 @@ export function documentFromMarkdown(input: {
     if (!line) continue;
     if (isShellNoise(line)) continue;
 
+    const codeFence = line.match(/^```[A-Za-z0-9_-]*\s*$/);
+    if (codeFence) {
+      const codeLines: string[] = [];
+      index += 1;
+
+      while (index < lines.length && !/^```\s*$/.test(lines[index].trim())) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+
+      blocks.push({ type: "code", text: codeLines.join("\n").trim() });
+      continue;
+    }
+
     if (isTableRow(line) && isTableSeparator(lines[index + 1]?.trim() ?? "")) {
       const tableRows: string[][] = [splitTableRow(line)];
       index += 2;

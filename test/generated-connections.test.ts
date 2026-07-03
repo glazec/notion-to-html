@@ -46,4 +46,26 @@ describe("generated HTML connections", () => {
 
     expect(output).toContain("Product UI demo with the core settlement flow.");
   });
+
+  it("does not treat Notion image assets or same-page anchors as linked pages", async () => {
+    const { preserveGeneratedConnections } = await import("@/lib/generated-connections");
+    const html = [
+      "<style data-document-to-html></style>",
+      "<main class=\"document-html-page wrap\">",
+      "<section><p>Generated body</p></section>",
+      "</main>",
+    ].join("");
+    const markdown = [
+      "# Toolbox",
+      "[Skip to content](https://app.notion.com/p/homeless20/8ddb379e60aa4deb8ef4f730fe96dfba?v=1ede54c010fe47f6b0fc1ee1b5d31fc7#main)",
+      "![Image 1](https://app.notion.com/icons/link_gray.svg?mode=light)",
+      "![Image 2](https://app.notion.com/images/emoji/twitter-emoji-spritesheet-32.0e67dbfc.webp)",
+    ].join("\n\n");
+
+    const output = preserveGeneratedConnections(html, markdown);
+
+    expect(output).not.toContain("Connected Notion pages are preserved");
+    expect(output).not.toContain("/api/pages?notionUrl=https%3A%2F%2Fapp.notion.com%2Ficons");
+    expect(output).not.toContain("Skip to content");
+  });
 });
