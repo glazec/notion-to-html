@@ -112,6 +112,27 @@ export function notionUrlFromPathSegments(segments: string[]): string | null {
   }
 }
 
+export function notionUrlFromNo7ionHostAlias(requestUrl: string): string | null {
+  let url: URL;
+
+  try {
+    url = new URL(requestUrl);
+  } catch {
+    return null;
+  }
+
+  if (url.hostname.toLowerCase() !== "app.no7ion.com") return null;
+
+  const candidate = new URL(`${url.pathname}${url.search}`, "https://app.notion.com").toString();
+
+  try {
+    parseNotionPageId(candidate);
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
 export function formatNotionId(id: string): string {
   const compact = id.replaceAll("-", "").toLowerCase();
 

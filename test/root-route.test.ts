@@ -91,6 +91,41 @@ describe("root path route", () => {
     }
   });
 
+  it("treats app.no7ion.com paths as app.notion.com source URLs", async () => {
+    const { GET } = await import("@/app/[...pagePath]/route");
+    upsertPageFromNotionUrl.mockResolvedValueOnce({
+      page_key: "38bf0ada243c80",
+      slug: "Computation-Financialization-Sourcing",
+    });
+
+    const response = await GET(
+      new Request("https://app.no7ion.com/p/iosgvc/Computation-Financialization-Sourcing-38bf0ada243c80c0b59ccb6d3dd4ab0d"),
+      {
+        params: Promise.resolve({
+          pagePath: [
+            "p",
+            "iosgvc",
+            "Computation-Financialization-Sourcing-38bf0ada243c80c0b59ccb6d3dd4ab0d",
+          ],
+        }),
+      },
+    );
+
+    expect(upsertPageFromNotionUrl).toHaveBeenCalledWith(
+      "https://app.notion.com/p/iosgvc/Computation-Financialization-Sourcing-38bf0ada243c80c0b59ccb6d3dd4ab0d",
+      { userTransformed: false },
+    );
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      name: "page/generate",
+      data: expect.objectContaining({
+        pageKey: "38bf0ada243c80",
+        source: "pasted-url-path",
+      }),
+    }));
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("https://notion-to-html.test/Computation-Financialization-Sourcing");
+  });
+
   it("rate limits pasted URL path generation before creating more jobs", async () => {
     const { GET } = await import("@/app/[...pagePath]/route");
     upsertPageFromNotionUrl.mockResolvedValue({

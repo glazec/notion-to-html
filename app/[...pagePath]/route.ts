@@ -3,7 +3,7 @@ import { events, inngest } from "@/inngest/client";
 import { appUrl } from "@/lib/env";
 import { isMissingEnvError, missingConfigResponse } from "@/lib/http-errors";
 import { checkInitialGenerationRateLimit } from "@/lib/initial-generation-rate-limit";
-import { notionUrlFromPathSegments } from "@/lib/notion";
+import { notionUrlFromNo7ionHostAlias, notionUrlFromPathSegments } from "@/lib/notion";
 import { findPageBySlug, upsertPageFromNotionUrl } from "@/lib/page-store";
 import { servedPageResponse } from "@/lib/page-response";
 
@@ -14,7 +14,7 @@ export async function GET(
   context: { params: Promise<{ pagePath: string[] }> },
 ) {
   const { pagePath } = await context.params;
-  const notionUrl = notionUrlFromPathSegments(pagePath);
+  const notionUrl = notionUrlFromNo7ionHostAlias(request.url) ?? notionUrlFromPathSegments(pagePath);
 
   if (notionUrl) {
     return pastedNotionUrlRedirect(request, notionUrl);
