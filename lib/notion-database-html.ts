@@ -7,6 +7,7 @@ export function renderNotionDatabaseHtmlBody(database: PublicNotionDatabase): st
   const rowsWithUrls = rows.filter((row) => row.productUrl).length;
   const rowsWithDescriptions = rows.filter((row) => row.description).length;
   const featuredRows = rows.slice(0, 6);
+  const rowCountLabel = database.truncated ? `First ${rows.length}` : String(rows.length);
 
   return `<style data-document-to-html>
 :root {
@@ -97,7 +98,14 @@ tbody tr:hover { background: var(--surface); }
   .hero-tagline { font-size: 17px; }
   .grid, .controls { grid-template-columns: 1fr; }
   .shead { display: block; }
-  table { min-width: 820px; }
+  .table-shell { overflow-x: visible; }
+  table { min-width: 0; }
+  thead { display: none; }
+  tbody tr { border-bottom: 1px solid var(--border); display: block; padding: 10px 0; }
+  tbody td { border-bottom: 0; display: grid; gap: 12px; grid-template-columns: minmax(92px, 32%) 1fr; padding: 9px 14px; }
+  tbody td::before { color: var(--muted); content: attr(data-label); font-family: var(--mono); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+  .num { width: auto; }
+  .name-cell, .desc-cell { max-width: none; min-width: 0; }
 }
 </style>
 <main class="document-html-page wrap">
@@ -113,7 +121,7 @@ tbody tr:hover { background: var(--surface); }
       <a href="#categories">Categories</a>
     </nav>
     <div class="stats" aria-label="Database stats">
-      <div class="stat"><strong>${rows.length}</strong><span>Notion rows fetched</span></div>
+      <div class="stat"><strong>${escapeHtml(rowCountLabel)}</strong><span>${database.truncated ? "Rows fetched before Notion reported more" : "Notion rows fetched"}</span></div>
       <div class="stat"><strong>${rowsWithUrls}</strong><span>Rows with product URLs</span></div>
       <div class="stat"><strong>${rowsWithDescriptions}</strong><span>Rows with descriptions</span></div>
       <div class="stat"><strong>${categories.length}</strong><span>Categories</span></div>
@@ -133,7 +141,7 @@ tbody tr:hover { background: var(--surface); }
         <div class="bar-list">${renderCategoryBars(categories)}</div>
       </div>
     </div>
-    <div class="note">Images and icons from Notion are treated as assets. They are not classified as database entries or subpages.</div>
+    <div class="note">${database.truncated ? `This public collection query returned ${rows.length} rows and reported more rows available. Narrow the source view or add an authenticated export path for databases above this size.` : "Images and icons from Notion are treated as assets. They are not classified as database entries or subpages."}</div>
   </section>
 
   <section id="featured">
@@ -149,7 +157,7 @@ tbody tr:hover { background: var(--surface); }
 
   <section id="entries">
     <div class="shead"><span class="sec-label">03 · DATABASE</span><h2>All entries</h2></div>
-    <p class="lede">This table renders all ${rows.length} fetched database rows.</p>
+    <p class="lede">This table renders ${database.truncated ? `the first ${rows.length}` : `all ${rows.length}`} fetched database rows.</p>
     <div class="controls" role="search">
       <input id="search" type="search" placeholder="Search name, description, URL, or category" autocomplete="off">
       <select id="category">${renderCategoryOptions(rows.length, categories)}</select>
@@ -218,11 +226,11 @@ function renderCategoryOptions(total: number, categories: [string, number][]): s
 
 function renderFeaturedRow(row: PublicNotionDatabaseRow): string {
   return `<tr>
-  <td><a class="featured-title" href="${escapeAttribute(generatedPageHref(row.rowUrl))}">${escapeHtml(row.title)}</a></td>
-  <td class="desc-cell">${renderDescription(row.description)}</td>
-  <td>${renderProductLink(row.productUrl)}</td>
-  <td><span class="chip">${escapeHtml(row.category)}</span></td>
-  <td>${escapeHtml(formatDate(row.createdTime))}</td>
+  <td data-label="Name"><a class="featured-title" href="${escapeAttribute(generatedPageHref(row.rowUrl))}">${escapeHtml(row.title)}</a></td>
+  <td class="desc-cell" data-label="Description">${renderDescription(row.description)}</td>
+  <td data-label="Product URL">${renderProductLink(row.productUrl)}</td>
+  <td data-label="Category"><span class="chip">${escapeHtml(row.category)}</span></td>
+  <td data-label="Created">${escapeHtml(formatDate(row.createdTime))}</td>
 </tr>`;
 }
 
@@ -235,12 +243,12 @@ function renderEntryRow(row: PublicNotionDatabaseRow, index: number): string {
   ].join(" ").toLowerCase();
 
   return `<tr data-category="${escapeAttribute(row.category)}" data-search="${escapeAttribute(searchText)}">
-  <td class="num">${index + 1}</td>
-  <td class="name-cell"><a class="entry-title" href="${escapeAttribute(generatedPageHref(row.rowUrl))}">${escapeHtml(row.title)}</a><a class="source-link" href="${escapeAttribute(row.rowUrl)}" target="_blank" rel="noreferrer">Notion row</a></td>
-  <td class="desc-cell">${renderDescription(row.description)}</td>
-  <td><span class="chip">${escapeHtml(row.category)}</span></td>
-  <td>${renderProductLink(row.productUrl)}</td>
-  <td>${escapeHtml(formatDate(row.createdTime))}</td>
+  <td class="num" data-label="#">${index + 1}</td>
+  <td class="name-cell" data-label="Name"><a class="entry-title" href="${escapeAttribute(generatedPageHref(row.rowUrl))}">${escapeHtml(row.title)}</a><a class="source-link" href="${escapeAttribute(row.rowUrl)}" target="_blank" rel="noreferrer">Notion row</a></td>
+  <td class="desc-cell" data-label="Description">${renderDescription(row.description)}</td>
+  <td data-label="Category"><span class="chip">${escapeHtml(row.category)}</span></td>
+  <td data-label="Product URL">${renderProductLink(row.productUrl)}</td>
+  <td data-label="Created">${escapeHtml(formatDate(row.createdTime))}</td>
 </tr>`;
 }
 

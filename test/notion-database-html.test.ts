@@ -18,6 +18,16 @@ describe("Notion database HTML rendering", () => {
     expect(html).toContain("<strong>Bold</strong>");
     expect(html).not.toContain("[docs](https://alpha.example/docs)");
   });
+
+  it("uses stacked table cells on mobile instead of a wide fixed table", () => {
+    const html = renderNotionDatabaseHtmlBody(databaseFixture());
+
+    expect(html).toContain("tbody td::before");
+    expect(html).toContain("content: attr(data-label)");
+    expect(html).toContain('data-label="Name"');
+    expect(html).toContain('data-label="Description"');
+    expect(html).toContain("table { min-width: 0; }");
+  });
 });
 
 function databaseFixture(): PublicNotionDatabase {
@@ -28,6 +38,7 @@ function databaseFixture(): PublicNotionDatabase {
     viewId: "22222222-2222-2222-2222-222222222222",
     title: "Toolbox",
     schema: {},
+    truncated: false,
     rows: [
       {
         id: "33333333-3333-3333-3333-333333333333",

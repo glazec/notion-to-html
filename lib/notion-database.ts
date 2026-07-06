@@ -18,6 +18,7 @@ export type PublicNotionDatabase = {
   viewId: string;
   title: string;
   rows: PublicNotionDatabaseRow[];
+  truncated: boolean;
   schema: Record<string, NotionSchemaProperty>;
 };
 
@@ -72,7 +73,7 @@ type QueryCollectionResponse = {
 };
 
 const notionApiBase = "https://www.notion.so/api/v3";
-const rowLimit = 1000;
+const rowLimit = 10000;
 
 export async function fetchPublicNotionDatabase(notionUrl: string): Promise<PublicNotionDatabase | null> {
   const pageId = parseNotionPageId(notionUrl);
@@ -122,9 +123,9 @@ export async function fetchPublicNotionDatabase(notionUrl: string): Promise<Publ
   });
 
   const recordMap = mergeRecordMaps(load.recordMap, query.recordMap);
-  const blockIds = extractResultBlockIds(query);
+  const result = extractCollectionResult(query);
   const propertyIds = databasePropertyIds(schema);
-  const rows = blockIds
+  const rows = result.blockIds
     .map((blockId) => recordMap.block?.[formatNotionId(blockId)] ?? recordMap.block?.[blockId])
     .map((record) => recordValue(record))
     .filter((block): block is NotionBlock => Boolean(block))
@@ -138,6 +139,7 @@ export async function fetchPublicNotionDatabase(notionUrl: string): Promise<Publ
     viewId,
     title: richTextPlainText(pageBlock.properties?.title) || richTextPlainText(collection?.name) || "Notion database",
     rows,
+    truncated: result.truncated,
     schema,
   };
 }
@@ -238,17 +240,23 @@ function recordSpaceId(record: NotionRecord<NotionBlock>, value: NotionBlock): s
   return value.space_id;
 }
 
-function extractResultBlockIds(query: QueryCollectionResponse): string[] {
+function extractCollectionResult(query: QueryCollectionResponse): {
+  blockIds: string[];
+  truncated: boolean;
+} {
   const reducers = query.result?.reducerResults ?? query.reducerResults ?? {};
   const collectionResults = reducers.collection_group_results;
-  if (!isRecord(collectionResults)) return [];
+  if (!isRecord(collectionResults)) return { blockIds: [], truncated: false };
 
   const blockIds = collectionResults.blockIds;
-  if (!Array.isArray(blockIds)) return [];
+  if (!Array.isArray(blockIds)) return { blockIds: [], truncated: false };
 
-  return blockIds
-    .filter((blockId): blockId is string => typeof blockId === "string")
-    .map(formatNotionId);
+  return {
+    blockIds: blockIds
+      .filter((blockId): blockId is string => typeof blockId === "string")
+      .map(formatNotionId),
+    truncated: collectionResults.hasMore === true,
+  };
 }
 
 function mergeRecordMaps(first: NotionRecordMap | undefined, second: NotionRecordMap | undefined): NotionRecordMap {

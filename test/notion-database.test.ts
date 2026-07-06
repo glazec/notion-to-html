@@ -63,13 +63,14 @@ describe("public Notion database fetch", () => {
         const body = JSON.parse(String(init?.body));
         expect(body.collection).toEqual({ id: collectionId, spaceId });
         expect(body.collectionView).toEqual({ id: viewId, spaceId });
-        expect(body.loader.reducers.collection_group_results.limit).toBe(1000);
+        expect(body.loader.reducers.collection_group_results.limit).toBe(10000);
 
         return jsonResponse({
           result: {
             reducerResults: {
               collection_group_results: {
                 blockIds: [rowOneId, rowTwoId],
+                hasMore: false,
               },
             },
           },
@@ -92,6 +93,7 @@ describe("public Notion database fetch", () => {
     );
 
     expect(database?.title).toBe("Toolbox");
+    expect(database?.truncated).toBe(false);
     expect(database?.rows).toHaveLength(2);
     expect(database?.rows[0]).toMatchObject({
       id: rowOneId,
@@ -107,6 +109,38 @@ describe("public Notion database fetch", () => {
     expect(rowUrl.searchParams.get("v")).toBe(viewId.replaceAll("-", ""));
     expect(rowUrl.searchParams.get("p")).toBe(rowOneId.replaceAll("-", ""));
     expect(rowUrl.searchParams.get("pm")).toBe("s");
+  });
+
+  it("marks the result truncated when Notion reports more collection rows", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.endsWith("/loadPageChunk")) {
+        return jsonResponse(collectionViewPageResponse());
+      }
+
+      return jsonResponse({
+        result: {
+          reducerResults: {
+            collection_group_results: {
+              blockIds: [rowOneId],
+              hasMore: true,
+            },
+          },
+        },
+        recordMap: {
+          block: {
+            [rowOneId]: rowRecord(rowOneId, "Alpha", "Description", "https://alpha.example", "ai", 1760000000000),
+          },
+        },
+      });
+    }));
+
+    const database = await fetchPublicNotionDatabase(
+      `https://app.notion.com/p/workspace/Toolbox-${pageId.replaceAll("-", "")}?v=${viewId.replaceAll("-", "")}`,
+    );
+
+    expect(database?.rows).toHaveLength(1);
+    expect(database?.truncated).toBe(true);
   });
 
   it("returns null when the public page is not a collection view page", async () => {
@@ -130,6 +164,48 @@ describe("public Notion database fetch", () => {
     )).resolves.toBeNull();
   });
 });
+
+function collectionViewPageResponse() {
+  return {
+    recordMap: {
+      block: {
+        [pageId]: {
+          spaceId,
+          value: {
+            role: "reader",
+            value: {
+              id: pageId,
+              type: "collection_view_page",
+              collection_id: collectionId,
+              view_ids: [viewId],
+              properties: { title: [["Toolbox"]] },
+            },
+          },
+        },
+      },
+      collection: {
+        [collectionId]: {
+          value: {
+            role: "reader",
+            value: {
+              id: collectionId,
+              name: [["Toolbox"]],
+              schema: {
+                title: { name: "Name", type: "title" },
+                desc: { name: "Description", type: "text" },
+                url: { name: "URL", type: "url" },
+                cat: { name: "Category", type: "select" },
+              },
+            },
+          },
+        },
+      },
+      collection_view: {
+        [viewId]: { value: { id: viewId, type: "table" } },
+      },
+    },
+  };
+}
 
 function rowRecord(
   id: string,

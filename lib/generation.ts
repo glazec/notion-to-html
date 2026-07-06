@@ -9,6 +9,7 @@ import { generateDocumentHtmlBody } from "@/lib/codex-generator";
 import { fetchSourceContent } from "@/lib/content-source";
 import { documentFromMarkdown } from "@/lib/document";
 import type { GenerationLogEntry, PageLanguage } from "@/lib/db";
+import type { PublicNotionDatabase } from "@/lib/notion-database";
 import { fetchPublicNotionDatabase } from "@/lib/notion-database";
 import { renderNotionDatabaseHtmlBody } from "@/lib/notion-database-html";
 import { prepareSourceAssets } from "@/lib/source-assets";
@@ -47,6 +48,21 @@ export async function generatePage(pageKey: string): Promise<{
     await setPageGenerationProgress({
       pageKey,
       status: "generating",
+      step: "Fetching public Notion collection rows",
+      progress: 25,
+    });
+    const database = await fetchPublicNotionDatabase(page.notion_url).catch(() => null);
+    if (database && database.rows.length > 0) {
+      return publishDatabasePage({
+        pageKey,
+        database,
+        generationStartedAt,
+      });
+    }
+
+    await setPageGenerationProgress({
+      pageKey,
+      status: "generating",
       step: "Fetching Notion content source",
       progress: 25,
     });
@@ -65,15 +81,6 @@ export async function generatePage(pageKey: string): Promise<{
         progress: 38,
       });
     }
-    const database = await fetchPublicNotionDatabase(page.notion_url).catch(() => null);
-    if (database && database.rows.length > 0) {
-      await setPageGenerationProgress({
-        pageKey,
-        status: "generating",
-        step: `Fetched ${plural(database.rows.length, "Notion database row")}`,
-        progress: 42,
-      });
-    }
     const sourceStats = analyzeSourceMarkdown(source.markdown);
     await setPageGenerationProgress({
       pageKey,
@@ -81,12 +88,10 @@ export async function generatePage(pageKey: string): Promise<{
       step: `Preparing source assets: ${plural(sourceStats.imageCount, "image")}, ${plural(sourceStats.notionLinkCount, "Notion link")}`,
       progress: 50,
     });
-    const preparedSource = database && database.rows.length > 0
-      ? { markdown: source.markdown, images: [], skippedImages: [] }
-      : await prepareSourceAssets({
-        pageId: source.pageId,
-        markdown: source.markdown,
-      });
+    const preparedSource = await prepareSourceAssets({
+      pageId: source.pageId,
+      markdown: source.markdown,
+    });
     const skippedImages = preparedSource.skippedImages ?? [];
     const skippedImageText = skippedImages.length === 0
       ? ""
@@ -121,9 +126,7 @@ export async function generatePage(pageKey: string): Promise<{
       markdown: preparedSource.markdown,
       notionUrl: source.url,
     });
-    const body = database && database.rows.length > 0
-      ? renderNotionDatabaseHtmlBody(database)
-      : await generateCodexBody({
+    const body = await generateCodexBody({
         pageKey,
         markdown: preparedSource.markdown,
         notionUrl: source.url,
@@ -135,9 +138,7 @@ export async function generatePage(pageKey: string): Promise<{
     await setPageGenerationProgress({
       pageKey,
       status: "generating",
-      step: database && database.rows.length > 0
-        ? `Rendering deterministic Notion database HTML: ${plural(database.rows.length, "row")}`
-        : "Finished Codex document-to-html generation",
+      step: "Finished Codex document-to-html generation",
       progress: 88,
     });
     const contentHash = sha256(body);
@@ -163,6 +164,79 @@ export async function generatePage(pageKey: string): Promise<{
     await setPageStatus(pageKey, "failed", error instanceof Error ? error.message : String(error));
     throw error;
   }
+}
+
+async function publishDatabasePage(input: {
+  pageKey: string;
+  database: PublicNotionDatabase;
+  generationStartedAt: Date;
+}): Promise<{
+  pageKey: string;
+  contentHash: string;
+  objectKey: string;
+}> {
+  const database = input.database;
+  await setPageGenerationProgress({
+    pageKey: input.pageKey,
+    status: "generating",
+    step: database.truncated
+      ? `Fetched ${plural(database.rows.length, "Notion database row")}; collection reported more rows`
+      : `Fetched ${plural(database.rows.length, "Notion database row")}`,
+    progress: 42,
+  });
+  await setPageGenerationProgress({
+    pageKey: input.pageKey,
+    status: "generating",
+    step: `Rendering deterministic Notion database HTML: ${plural(database.rows.length, "row")}`,
+    progress: 88,
+  });
+
+  const body = renderNotionDatabaseHtmlBody(database);
+  const documentJson = documentFromMarkdown({
+    markdown: databaseMarkdown(database),
+    notionUrl: database.sourceUrl,
+  });
+  const contentHash = sha256(body);
+  const objectKey = `pages/${database.pageId}/${contentHash}/index.html`;
+
+  await setPageGenerationProgress({
+    pageKey: input.pageKey,
+    status: "generating",
+    step: "Publishing cached HTML object",
+    progress: 90,
+  });
+  await putHtmlObject(objectKey, body);
+  await completePageGeneration({
+    pageKey: input.pageKey,
+    contentHash,
+    objectKey,
+    documentJson,
+    generationStartedAt: input.generationStartedAt,
+  });
+
+  return { pageKey: input.pageKey, contentHash, objectKey };
+}
+
+function databaseMarkdown(database: PublicNotionDatabase): string {
+  const lines = [
+    `# ${database.title}`,
+    "",
+    `Source: ${database.sourceUrl}`,
+    `Rows fetched: ${database.rows.length}${database.truncated ? " plus more reported by Notion" : ""}`,
+    "",
+    "## Rows",
+    ...database.rows.map((row, index) => {
+      const parts = [
+        `${index + 1}. [${row.title}](${row.rowUrl})`,
+        row.category ? `Category: ${row.category}` : "",
+        row.productUrl ? `URL: ${row.productUrl}` : "",
+        row.description ? `Description: ${row.description}` : "",
+      ].filter(Boolean);
+      return parts.join(" | ");
+    }),
+  ];
+
+  return lines.join("\n");
 }
 
 function analyzeSourceMarkdown(markdown: string): {

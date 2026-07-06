@@ -165,15 +165,9 @@ describe("page generation", () => {
       page_key: "abc123",
       notion_url: "https://app.notion.com/p/workspace/Toolbox-11111111111111111111111111111111?v=22222222222222222222222222222222",
     });
-    fetchSourceContent.mockResolvedValue({
-      markdown: "# Toolbox\n\nOnly four scraped rows.",
-      url: "https://app.notion.com/p/workspace/Toolbox-11111111111111111111111111111111?v=22222222222222222222222222222222",
-      pageId: "11111111-1111-1111-1111-111111111111",
-      sourceName: "Firecrawl",
-      commentCount: 0,
-      discussionCount: 0,
-    });
     const database = {
+      pageId: "11111111-1111-1111-1111-111111111111",
+      sourceUrl: "https://app.notion.com/p/workspace/Toolbox-11111111111111111111111111111111?v=22222222222222222222222222222222",
       title: "Toolbox",
       rows: [
         { title: "Alpha" },
@@ -190,9 +184,33 @@ describe("page generation", () => {
     expect(steps).toContain("Fetched 2 Notion database rows");
     expect(steps).toContain("Rendering deterministic Notion database HTML: 2 rows");
     expect(renderNotionDatabaseHtmlBody).toHaveBeenCalledWith(database);
+    expect(fetchSourceContent).not.toHaveBeenCalled();
     expect(prepareSourceAssets).not.toHaveBeenCalled();
     expect(generateDocumentHtmlBody).not.toHaveBeenCalled();
     expect(putHtmlObject).toHaveBeenCalledWith(expect.any(String), "<main>All database rows</main>");
+  });
+
+  it("uses public collection rows even when the scrape source would be inaccessible", async () => {
+    findPage.mockResolvedValue({
+      page_key: "abc123",
+      notion_url: "https://app.notion.com/p/workspace/Toolbox-11111111111111111111111111111111?v=22222222222222222222222222222222",
+    });
+    const database = {
+      pageId: "11111111-1111-1111-1111-111111111111",
+      sourceUrl: "https://app.notion.com/p/workspace/Toolbox-11111111111111111111111111111111?v=22222222222222222222222222222222",
+      title: "Toolbox",
+      rows: [{ title: "Alpha" }],
+    };
+    fetchPublicNotionDatabase.mockResolvedValue(database);
+    fetchSourceContent.mockRejectedValue(new Error("Notion page is not accessible."));
+    renderNotionDatabaseHtmlBody.mockReturnValue("<main>Database rows</main>");
+
+    const { generatePage } = await import("@/lib/generation");
+    await generatePage("abc123");
+
+    expect(fetchSourceContent).not.toHaveBeenCalled();
+    expect(setPageStatus).not.toHaveBeenCalled();
+    expect(putHtmlObject).toHaveBeenCalledWith(expect.any(String), "<main>Database rows</main>");
   });
 
   it("passes the page language preference into Codex HTML generation", async () => {
