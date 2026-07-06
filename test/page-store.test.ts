@@ -154,6 +154,33 @@ describe("page store", () => {
     expect(JSON.stringify(logEntry)).not.toContain("ntn_");
   });
 
+  it("does not let stale generator progress overwrite a ready cached page", async () => {
+    vi.mocked(query)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([pageRecord({
+        current_hash: "published-hash",
+        status: "ready",
+        dirty_at: null,
+        generation_step: "Ready",
+        generation_progress: 100,
+      })]);
+
+    const result = await setPageGenerationProgress({
+      pageKey: "0123456789abcd",
+      status: "generating",
+      step: "Codex still running",
+      progress: 80,
+    });
+
+    const updateSql = vi.mocked(query).mock.calls[0][0];
+    expect(updateSql).toContain("status = 'ready'");
+    expect(updateSql).toContain("current_hash is not null");
+    expect(updateSql).toContain("dirty_at is null");
+    expect(vi.mocked(query).mock.calls[1][0]).toContain("select * from pages");
+    expect(result.status).toBe("ready");
+    expect(result.generation_progress).toBe(100);
+  });
+
   it("keeps pages queued when they were marked dirty after generation started", async () => {
     vi.mocked(query)
       .mockResolvedValueOnce([])

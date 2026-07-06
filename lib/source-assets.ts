@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, extname, join } from "node:path";
-import { Agent } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
 import { putBinaryObject } from "@/lib/bucket";
 import { describeImageAsset } from "@/lib/codex-generator";
 
@@ -19,6 +19,18 @@ type StoredImage = SourceImage & {
   objectKey: string;
   description: string;
 };
+
+type SkippedImage = SourceImage & {
+  reason: string;
+};
+
+type ImageFetchResponse = Awaited<ReturnType<typeof undiciFetch>>;
+type SafeLookupAddress = { address: string; family: number };
+type SafeLookupCallback = (
+  error: NodeJS.ErrnoException | null,
+  address: string | SafeLookupAddress[],
+  family?: number,
+) => void;
 
 const markdownImagePattern = /!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g;
 const maxImageBytes = 5 * 1024 * 1024;
@@ -36,24 +48,36 @@ export async function prepareSourceAssets(input: {
 }): Promise<{
   markdown: string;
   images: StoredImage[];
+  skippedImages: SkippedImage[];
 }> {
   const images = uniqueImages(extractMarkdownImages(input.markdown)).slice(0, 20);
   if (images.length === 0) {
-    return { markdown: input.markdown, images: [] };
+    return { markdown: input.markdown, images: [], skippedImages: [] };
   }
 
   const storedImages: StoredImage[] = [];
+  const skippedImages: SkippedImage[] = [];
   let markdown = input.markdown;
 
   for (const image of images) {
-    const stored = await storeAndDescribeImage(input.pageId, image);
-    storedImages.push(stored);
-    markdown = markdown.replaceAll(image.sourceUrl, stored.localUrl);
+    try {
+      const stored = await storeAndDescribeImage(input.pageId, image);
+      storedImages.push(stored);
+      markdown = markdown.replaceAll(image.sourceUrl, stored.localUrl);
+    } catch (error) {
+      const skipped = {
+        ...image,
+        reason: imageSkipReason(error),
+      };
+      skippedImages.push(skipped);
+      markdown = removeImageMarkdown(markdown, skipped);
+    }
   }
 
   return {
-    markdown: appendImageDescriptions(markdown, storedImages),
+    markdown: appendImageDescriptions(markdown, storedImages, skippedImages),
     images: storedImages,
+    skippedImages,
   };
 }
 
@@ -104,19 +128,44 @@ async function storeAndDescribeImage(pageId: string, image: SourceImage): Promis
   }
 }
 
-function appendImageDescriptions(markdown: string, images: StoredImage[]): string {
-  const lines = images.map((image, index) => [
+function appendImageDescriptions(
+  markdown: string,
+  images: StoredImage[],
+  skippedImages: SkippedImage[],
+): string {
+  if (images.length === 0 && skippedImages.length === 0) return markdown;
+
+  const storedLines = images.map((image, index) => [
     `### Image ${index + 1}: ${image.alt}`,
     `Local image: ${image.localUrl}`,
     `Original image: ${image.sourceUrl}`,
     `Codex image description: ${image.description}`,
   ].join("\n"));
+  const skippedLines = skippedImages.map((image, index) => [
+    `### Skipped image ${index + 1}: ${image.alt}`,
+    `Reason: ${image.reason}`,
+  ].join("\n"));
 
   return [
     markdown,
     "## Visual assets",
-    ...lines,
+    ...storedLines,
+    ...skippedLines,
   ].join("\n\n");
+}
+
+function removeImageMarkdown(markdown: string, image: SourceImage): string {
+  const imagePattern = new RegExp(`!\\[[^\\]]*\\]\\(${escapeRegExp(image.sourceUrl)}\\)`, "g");
+  return markdown.replace(imagePattern, `[Skipped image: ${image.alt}]`);
+}
+
+function imageSkipReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\bhttps?:\/\/[^\s)'"<>]+/gi, "[url redacted]");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function assertAllowedImageUrl(sourceUrl: string): Promise<void> {
@@ -197,16 +246,16 @@ function normalizeIpAddress(address: string): string {
   return address;
 }
 
-async function fetchImage(sourceUrl: string, redirectCount = 0): Promise<Response> {
+async function fetchImage(sourceUrl: string, redirectCount = 0): Promise<ImageFetchResponse> {
   await assertAllowedImageUrl(sourceUrl);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), imageFetchTimeoutMs);
   try {
-    const response = await fetch(sourceUrl, {
+    const response = await undiciFetch(sourceUrl, {
       signal: controller.signal,
       redirect: "manual",
       dispatcher: safeImageDispatcher,
-    } as RequestInit & { dispatcher: Agent });
+    } as Parameters<typeof undiciFetch>[1]);
 
     if (isRedirect(response.status)) {
       if (redirectCount >= maxImageRedirects) {
@@ -231,10 +280,10 @@ function isRedirect(status: number): boolean {
   return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
 
-function safeLookup(
+export function safeLookup(
   hostname: string,
   options: LookupOptions,
-  callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void,
+  callback: SafeLookupCallback,
 ): void {
   void lookup(hostname, { ...options, all: true, verbatim: true })
     .then((addresses) => {
@@ -249,12 +298,17 @@ function safeLookup(
         return;
       }
 
+      if (options.all) {
+        callback(null, addresses.map(({ address, family }) => ({ address, family })));
+        return;
+      }
+
       callback(null, first.address, first.family);
     })
     .catch((error: unknown) => callback(error instanceof Error ? error : new Error(String(error)), "", 0));
 }
 
-async function readImageBytes(response: Response): Promise<Uint8Array> {
+async function readImageBytes(response: ImageFetchResponse): Promise<Uint8Array> {
   const contentLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > maxImageBytes) {
     throw new Error("Image is too large.");

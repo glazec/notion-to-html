@@ -6,6 +6,8 @@ const setPageStatus = vi.fn();
 const completePageGeneration = vi.fn();
 const generateDocumentHtmlBody = vi.fn();
 const fetchSourceContent = vi.fn();
+const fetchPublicNotionDatabase = vi.fn();
+const renderNotionDatabaseHtmlBody = vi.fn();
 const prepareSourceAssets = vi.fn();
 const putHtmlObject = vi.fn();
 
@@ -22,6 +24,14 @@ vi.mock("@/lib/codex-generator", () => ({
 
 vi.mock("@/lib/content-source", () => ({
   fetchSourceContent,
+}));
+
+vi.mock("@/lib/notion-database", () => ({
+  fetchPublicNotionDatabase,
+}));
+
+vi.mock("@/lib/notion-database-html", () => ({
+  renderNotionDatabaseHtmlBody,
 }));
 
 vi.mock("@/lib/source-assets", () => ({
@@ -54,6 +64,10 @@ describe("page generation", () => {
     completePageGeneration.mockReset();
     generateDocumentHtmlBody.mockReset();
     fetchSourceContent.mockReset();
+    fetchPublicNotionDatabase.mockReset();
+    fetchPublicNotionDatabase.mockResolvedValue(null);
+    renderNotionDatabaseHtmlBody.mockReset();
+    renderNotionDatabaseHtmlBody.mockReturnValue("<main>Database</main>");
     prepareSourceAssets.mockReset();
     prepareSourceAssets.mockImplementation(async ({ markdown }) => ({ markdown, images: [] }));
     putHtmlObject.mockReset();
@@ -106,6 +120,7 @@ describe("page generation", () => {
       markdown: [
         "# Hello",
         "![Demo](https://example.com/demo.png)",
+        "![Icon](https://example.com/icon.svg)",
         "[Child](https://app.notion.com/p/workspace/Child-0123456789abcdef0123456789abcdef)",
       ].join("\n\n"),
       url: "https://notion.so/test",
@@ -123,6 +138,11 @@ describe("page generation", () => {
         objectKey: "assets/pages/page-id/images/demo.png",
         description: "Demo screenshot",
       }],
+      skippedImages: [{
+        alt: "Icon",
+        sourceUrl: "https://example.com/icon.svg",
+        reason: "Unsupported image type.",
+      }],
     });
     generateDocumentHtmlBody.mockResolvedValue("<main>Generated</main>");
 
@@ -132,12 +152,47 @@ describe("page generation", () => {
     const steps = setPageGenerationProgress.mock.calls.map(([input]) => input.step);
     expect(steps).toContain("Fetching Notion content source");
     expect(steps.some((step) => /^Notion API returned \d+ markdown chars$/.test(step))).toBe(true);
-    expect(steps).toContain("Preparing source assets: 1 image, 1 Notion link");
-    expect(steps).toContain("Stored and described 1 image");
+    expect(steps).toContain("Preparing source assets: 2 images, 1 Notion link");
+    expect(steps).toContain("Stored and described 1 image; skipped 1 image");
     expect(steps).toContain("Preserving 1 linked Notion page");
     expect(steps).toContain("Included 2 Notion comments from 1 discussion");
     expect(steps).toContain("Starting Codex document-to-html generation: 1 image, 1 Notion link");
     expect(steps).toContain("Publishing cached HTML object");
+  });
+
+  it("renders public Notion databases from collection rows instead of partial markdown", async () => {
+    findPage.mockResolvedValue({
+      page_key: "abc123",
+      notion_url: "https://app.notion.com/p/workspace/Toolbox-11111111111111111111111111111111?v=22222222222222222222222222222222",
+    });
+    fetchSourceContent.mockResolvedValue({
+      markdown: "# Toolbox\n\nOnly four scraped rows.",
+      url: "https://app.notion.com/p/workspace/Toolbox-11111111111111111111111111111111?v=22222222222222222222222222222222",
+      pageId: "11111111-1111-1111-1111-111111111111",
+      sourceName: "Firecrawl",
+      commentCount: 0,
+      discussionCount: 0,
+    });
+    const database = {
+      title: "Toolbox",
+      rows: [
+        { title: "Alpha" },
+        { title: "Beta" },
+      ],
+    };
+    fetchPublicNotionDatabase.mockResolvedValue(database);
+    renderNotionDatabaseHtmlBody.mockReturnValue("<main>All database rows</main>");
+
+    const { generatePage } = await import("@/lib/generation");
+    await generatePage("abc123");
+
+    const steps = setPageGenerationProgress.mock.calls.map(([input]) => input.step);
+    expect(steps).toContain("Fetched 2 Notion database rows");
+    expect(steps).toContain("Rendering deterministic Notion database HTML: 2 rows");
+    expect(renderNotionDatabaseHtmlBody).toHaveBeenCalledWith(database);
+    expect(prepareSourceAssets).not.toHaveBeenCalled();
+    expect(generateDocumentHtmlBody).not.toHaveBeenCalled();
+    expect(putHtmlObject).toHaveBeenCalledWith(expect.any(String), "<main>All database rows</main>");
   });
 
   it("passes the page language preference into Codex HTML generation", async () => {

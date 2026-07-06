@@ -353,6 +353,8 @@ function servedCss(): string {
 :root { color-scheme: light; --fg:#050505; --muted:#666; --line:#e5e5e5; --soft:#fafafa; }
 * { box-sizing: border-box; }
 body { margin: 0; background: #fff; color: var(--fg); font-family: Arial, Helvetica, sans-serif; }
+body a { overflow-wrap: anywhere; word-break: break-word; }
+body img, body svg, body video, body canvas, body iframe { max-width: 100%; height: auto; }
 .nth-document { width: min(860px, calc(100% - 40px)); margin: 0 auto; padding: 72px 0 112px; }
 .nth-hero { padding: 60px 0 52px; border-bottom: 1px solid var(--line); }
 .nth-hero h1 { margin: 0; font-size: clamp(42px, 8vw, 88px); line-height: .96; letter-spacing: 0; }

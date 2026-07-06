@@ -39,6 +39,22 @@ describe("HTML rendering", () => {
     expect(html).toContain("Fresh");
   });
 
+  it("adds shell-level mobile overflow guards for generated content", () => {
+    const html = wrapServedHtml({
+      title: "Mobile",
+      notionUrl: "https://notion.so/test",
+      regeneratePath: "/api/pages/abc/regenerate",
+      body: '<main><a href="https://app.notion.com/p/workspace/0123456789abcdef0123456789abcdef">https://app.notion.com/p/workspace/0123456789abcdef0123456789abcdef</a></main>',
+      pageState: {
+        status: "ready",
+        generatedAt: new Date(),
+      },
+    });
+
+    expect(html).toContain("body a { overflow-wrap: anywhere; word-break: break-word; }");
+    expect(html).toContain("body img, body svg, body video, body canvas, body iframe { max-width: 100%; height: auto; }");
+  });
+
   it("sets the served shell language to Chinese when the content is Chinese", () => {
     const html = wrapServedHtml({
       title: "硅谷与亚洲早期资本",

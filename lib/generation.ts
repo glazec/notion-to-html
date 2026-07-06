@@ -9,6 +9,8 @@ import { generateDocumentHtmlBody } from "@/lib/codex-generator";
 import { fetchSourceContent } from "@/lib/content-source";
 import { documentFromMarkdown } from "@/lib/document";
 import type { GenerationLogEntry, PageLanguage } from "@/lib/db";
+import { fetchPublicNotionDatabase } from "@/lib/notion-database";
+import { renderNotionDatabaseHtmlBody } from "@/lib/notion-database-html";
 import { prepareSourceAssets } from "@/lib/source-assets";
 import { wrapServedHtml } from "@/lib/render-html";
 import { sha256 } from "@/lib/hash";
@@ -63,6 +65,15 @@ export async function generatePage(pageKey: string): Promise<{
         progress: 38,
       });
     }
+    const database = await fetchPublicNotionDatabase(page.notion_url).catch(() => null);
+    if (database && database.rows.length > 0) {
+      await setPageGenerationProgress({
+        pageKey,
+        status: "generating",
+        step: `Fetched ${plural(database.rows.length, "Notion database row")}`,
+        progress: 42,
+      });
+    }
     const sourceStats = analyzeSourceMarkdown(source.markdown);
     await setPageGenerationProgress({
       pageKey,
@@ -70,16 +81,24 @@ export async function generatePage(pageKey: string): Promise<{
       step: `Preparing source assets: ${plural(sourceStats.imageCount, "image")}, ${plural(sourceStats.notionLinkCount, "Notion link")}`,
       progress: 50,
     });
-    const preparedSource = await prepareSourceAssets({
-      pageId: source.pageId,
-      markdown: source.markdown,
-    });
+    const preparedSource = database && database.rows.length > 0
+      ? { markdown: source.markdown, images: [], skippedImages: [] }
+      : await prepareSourceAssets({
+        pageId: source.pageId,
+        markdown: source.markdown,
+      });
+    const skippedImages = preparedSource.skippedImages ?? [];
+    const skippedImageText = skippedImages.length === 0
+      ? ""
+      : `; skipped ${plural(skippedImages.length, "image")}`;
     await setPageGenerationProgress({
       pageKey,
       status: "generating",
       step: preparedSource.images.length === 0
-        ? "No source images to store"
-        : `Stored and described ${plural(preparedSource.images.length, "image")}`,
+        ? skippedImages.length === 0
+          ? "No source images to store"
+          : `Skipped ${plural(skippedImages.length, "image")}; no source images to store`
+        : `Stored and described ${plural(preparedSource.images.length, "image")}${skippedImageText}`,
       progress: 58,
     });
     await setPageGenerationProgress({
@@ -102,26 +121,25 @@ export async function generatePage(pageKey: string): Promise<{
       markdown: preparedSource.markdown,
       notionUrl: source.url,
     });
-    await setPageGenerationProgress({
-      pageKey,
-      status: "generating",
-      step: `Starting Codex document-to-html generation: ${plural(preparedSource.images.length, "image")}, ${plural(sourceStats.notionLinkCount, "Notion link")}`,
-      progress: 70,
-    });
-    const body = await withCodexHeartbeat(
-      pageKey,
-      {
-        markdownChars: preparedSource.markdown.length,
-        imageCount: preparedSource.images.length,
-        notionLinkCount: sourceStats.notionLinkCount,
-        commentCount: source.commentCount,
-      },
-      () => generateDocumentHtmlBody({
+    const body = database && database.rows.length > 0
+      ? renderNotionDatabaseHtmlBody(database)
+      : await generateCodexBody({
+        pageKey,
         markdown: preparedSource.markdown,
         notionUrl: source.url,
         targetLanguage: page.preferred_language ?? "auto",
-      }),
-    );
+        imageCount: preparedSource.images.length,
+        notionLinkCount: sourceStats.notionLinkCount,
+        commentCount: source.commentCount,
+      });
+    await setPageGenerationProgress({
+      pageKey,
+      status: "generating",
+      step: database && database.rows.length > 0
+        ? `Rendering deterministic Notion database HTML: ${plural(database.rows.length, "row")}`
+        : "Finished Codex document-to-html generation",
+      progress: 88,
+    });
     const contentHash = sha256(body);
     const objectKey = `pages/${source.pageId}/${contentHash}/index.html`;
 
@@ -177,6 +195,38 @@ function trimUrlPunctuation(value: string): string {
 
 function plural(count: number, singular: string): string {
   return `${count} ${singular}${count === 1 ? "" : "s"}`;
+}
+
+async function generateCodexBody(input: {
+  pageKey: string;
+  markdown: string;
+  notionUrl: string;
+  targetLanguage: PageLanguage;
+  imageCount: number;
+  notionLinkCount: number;
+  commentCount: number;
+}): Promise<string> {
+  await setPageGenerationProgress({
+    pageKey: input.pageKey,
+    status: "generating",
+    step: `Starting Codex document-to-html generation: ${plural(input.imageCount, "image")}, ${plural(input.notionLinkCount, "Notion link")}`,
+    progress: 70,
+  });
+
+  return withCodexHeartbeat(
+    input.pageKey,
+    {
+      markdownChars: input.markdown.length,
+      imageCount: input.imageCount,
+      notionLinkCount: input.notionLinkCount,
+      commentCount: input.commentCount,
+    },
+    () => generateDocumentHtmlBody({
+      markdown: input.markdown,
+      notionUrl: input.notionUrl,
+      targetLanguage: input.targetLanguage,
+    }),
+  );
 }
 
 async function withCodexHeartbeat<T>(

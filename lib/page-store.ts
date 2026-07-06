@@ -155,6 +155,12 @@ export async function setPageGenerationProgress(input: {
           generation_log = ${appendGenerationLogSql("$5::jsonb")},
           updated_at = now()
       where page_key = $1
+        and not (
+          $2 = 'generating'
+          and status = 'ready'
+          and current_hash is not null
+          and dirty_at is null
+        )
       returning *
     `,
     [
@@ -167,6 +173,8 @@ export async function setPageGenerationProgress(input: {
   );
 
   if (!rows[0]) {
+    const existingRows = await query<PageRecord>("select * from pages where page_key = $1", [input.pageKey]);
+    if (existingRows[0]) return existingRows[0];
     throw new Error(`Page not found: ${input.pageKey}`);
   }
 
