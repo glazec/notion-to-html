@@ -109,6 +109,15 @@ async function storeAndDescribeImage(pageId: string, image: SourceImage): Promis
   const localUrl = `/${objectKey}`;
   await putBinaryObject(objectKey, bytes, contentType);
 
+  if (contentType === "image/svg+xml") {
+    return {
+      ...image,
+      localUrl,
+      objectKey,
+      description: svgImageDescription(image.alt),
+    };
+  }
+
   const imagePath = await writeTempImage(bytes, extensionForImage(contentType, image.sourceUrl));
   try {
     const description = await describeImageAsset({
@@ -350,6 +359,7 @@ function detectImageContentType(bytes: Uint8Array, contentType: string | null, s
   const extension = extname(new URL(sourceUrl).pathname).toLowerCase();
 
   if (value === "image/svg+xml" || extension === ".svg") {
+    if (looksLikeSvg(bytes)) return "image/svg+xml";
     throw new Error("Unsupported image type.");
   }
 
@@ -359,6 +369,15 @@ function detectImageContentType(bytes: Uint8Array, contentType: string | null, s
   if (ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 12) === "WEBP") return "image/webp";
 
   throw new Error("Unsupported image type.");
+}
+
+function looksLikeSvg(bytes: Uint8Array): boolean {
+  const prefix = new TextDecoder("utf8", { fatal: false })
+    .decode(bytes.slice(0, 2048))
+    .replace(/^\uFEFF/, "")
+    .trimStart();
+
+  return /^(?:<\?xml\b[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)?(?:<!doctype\s+svg\b[^>]*>\s*)?<svg[\s>]/i.test(prefix);
 }
 
 function hasPrefix(bytes: Uint8Array, prefix: number[]): boolean {
@@ -374,6 +393,7 @@ function extensionForImage(contentType: string, sourceUrl: string): string {
   if (contentType === "image/jpeg") return ".jpg";
   if (contentType === "image/gif") return ".gif";
   if (contentType === "image/webp") return ".webp";
+  if (contentType === "image/svg+xml") return ".svg";
 
   const extension = extname(new URL(sourceUrl).pathname).toLowerCase();
   return extension || ".png";
@@ -392,4 +412,11 @@ async function writeTempImage(bytes: Uint8Array, extension: string): Promise<str
   const imagePath = join(dir, `image${extension}`);
   await writeFile(imagePath, bytes);
   return imagePath;
+}
+
+function svgImageDescription(altText: string): string {
+  const label = altText.trim();
+  return label
+    ? `SVG diagram from the Notion page labeled "${label}".`
+    : "SVG diagram from the Notion page.";
 }

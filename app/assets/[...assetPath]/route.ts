@@ -15,7 +15,7 @@ export async function GET(
       "Content-Type": asset.contentType,
       "Cache-Control": "public, max-age=31536000, immutable",
       "X-Content-Type-Options": "nosniff",
-      ...(asset.contentType === "image/svg+xml" ? { "Content-Disposition": "attachment" } : {}),
+      ...(asset.contentType === "image/svg+xml" ? { "Content-Security-Policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox" } : {}),
     },
   });
 }

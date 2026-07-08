@@ -11,7 +11,7 @@ describe("asset route", () => {
     getBinaryObject.mockReset();
   });
 
-  it("serves stored svg assets as attachments with nosniff", async () => {
+  it("serves stored svg assets with render-safe headers", async () => {
     getBinaryObject.mockResolvedValue({
       body: new TextEncoder().encode("<svg></svg>"),
       contentType: "image/svg+xml",
@@ -24,7 +24,8 @@ describe("asset route", () => {
     );
 
     expect(response.headers.get("content-type")).toBe("image/svg+xml");
-    expect(response.headers.get("content-disposition")).toBe("attachment");
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(response.headers.get("content-security-policy")).toBe("default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
   });
 });

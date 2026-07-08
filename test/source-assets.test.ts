@@ -182,8 +182,33 @@ describe("source asset preparation", () => {
     expect(result).toEqual([null, "93.184.216.34", 4]);
   });
 
-  it("skips svg image payloads", async () => {
-    undiciFetch.mockResolvedValue(new Response("<svg onload=\"bad()\"></svg>", {
+  it("stores svg image payloads without running image description", async () => {
+    const svgBytes = new TextEncoder().encode("<svg xmlns=\"http://www.w3.org/2000/svg\"><text>Private AI</text></svg>");
+    undiciFetch.mockResolvedValue(new Response(svgBytes, {
+      status: 200,
+      headers: { "content-type": "image/svg+xml" },
+    }));
+
+    const { prepareSourceAssets } = await import("@/lib/source-assets");
+    const result = await prepareSourceAssets({
+      pageId: "37cf0ada243c81279b43e3a1603c6a43",
+      markdown: "![Svg](https://example.com/demo.svg)",
+    });
+
+    expect(putBinaryObject).toHaveBeenCalledWith(
+      expect.stringMatching(/^assets\/pages\/37cf0ada243c81279b43e3a1603c6a43\/images\/[a-f0-9]+\.svg$/),
+      svgBytes,
+      "image/svg+xml",
+    );
+    expect(describeImageAsset).not.toHaveBeenCalled();
+    expect(result.images).toHaveLength(1);
+    expect(result.skippedImages).toEqual([]);
+    expect(result.markdown).toContain("![Svg](/assets/pages/37cf0ada243c81279b43e3a1603c6a43/images/");
+    expect(result.markdown).toContain("Codex image description: SVG diagram from the Notion page labeled \"Svg\".");
+  });
+
+  it("skips non-svg payloads served as svg", async () => {
+    undiciFetch.mockResolvedValue(new Response("<html></html>", {
       status: 200,
       headers: { "content-type": "image/svg+xml" },
     }));
@@ -199,7 +224,6 @@ describe("source asset preparation", () => {
       alt: "Svg",
       reason: "Unsupported image type.",
     })]);
-    expect(result.markdown).not.toContain("https://example.com/demo.svg");
   });
 
   it("skips oversized image bodies while streaming", async () => {
