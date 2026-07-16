@@ -362,12 +362,12 @@ body img, body svg, body video, body canvas, body iframe { max-width: 100%; heig
 .nth-content { padding: 44px 0; }
 .nth-content h2 { margin: 40px 0 12px; font-size: 28px; line-height: 1.2; }
 .nth-content h3 { margin: 32px 0 10px; font-size: 22px; line-height: 1.25; }
-.nth-content p, .nth-content blockquote { font-size: 17px; line-height: 1.7; }
+.nth-content > p, .nth-content > blockquote { font-size: 17px; line-height: 1.7; }
 .nth-content p { margin: 14px 0; }
 .nth-content a { text-decoration: underline; text-underline-offset: 3px; }
 .nth-list-item { padding-left: 18px; position: relative; }
 .nth-list-item::before { content: ""; position: absolute; left: 2px; top: .78em; width: 5px; height: 5px; border-radius: 999px; background: var(--fg); }
-blockquote { margin: 24px 0; padding: 16px 18px; border-left: 3px solid var(--fg); background: var(--soft); }
+.nth-content > blockquote { margin: 24px 0; padding: 16px 18px; border-left: 3px solid var(--fg); background: var(--soft); }
 pre { overflow: auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
 .nth-image { margin: 28px 0; }
 .nth-image img { display: block; width: 100%; max-height: 720px; object-fit: contain; border-radius: 8px; border: 1px solid var(--line); background: var(--soft); }

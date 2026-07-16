@@ -28,6 +28,38 @@ describe("generated HTML connections", () => {
     expect(output).toContain("Product UI demo with the core settlement flow.");
   });
 
+  it("keeps links to the current Notion source external instead of routing back to the same generated page", async () => {
+    const { preserveGeneratedConnections } = await import("@/lib/generated-connections");
+    const sourceUrl = "https://iosgvc.notion.site/Potential-Skills-Consolidation-396f0ada243c80869444d8f311c7a296";
+    const childUrl = "https://iosgvc.notion.site/Research-Appendix-fedcba9876543210fedcba9876543210";
+    const html = [
+      "<style data-document-to-html></style>",
+      "<main class=\"document-html-page wrap\">",
+      `<a href="${sourceUrl}">View details</a>`,
+      `<a href="${childUrl}">Research appendix</a>`,
+      "</main>",
+    ].join("");
+
+    const output = preserveGeneratedConnections(html, "# Source", sourceUrl);
+
+    expect(output).toContain(`href="${sourceUrl}"`);
+    expect(output).not.toContain(`/api/pages?notionUrl=${encodeURIComponent(sourceUrl)}`);
+    expect(output).toContain(`/api/pages?notionUrl=${encodeURIComponent(childUrl)}`);
+  });
+
+  it("omits emoji from fallback reference labels", async () => {
+    const { preserveGeneratedConnections } = await import("@/lib/generated-connections");
+    const childUrl = "https://iosgvc.notion.site/Research-Appendix-fedcba9876543210fedcba9876543210";
+    const output = preserveGeneratedConnections(
+      '<style data-document-to-html></style><main class="document-html-page wrap"></main>',
+      `# Source\n\n- [📚 Research appendix 🔬](${childUrl})`,
+    );
+
+    expect(output).toContain(">Research appendix</a>");
+    expect(output).not.toContain("📚");
+    expect(output).not.toContain("🔬");
+  });
+
   it("keeps an image description even when Codex already included the image", async () => {
     const { preserveGeneratedConnections } = await import("@/lib/generated-connections");
     const output = preserveGeneratedConnections(

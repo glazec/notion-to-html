@@ -14,9 +14,14 @@ type NotionLinkConnection = {
 const markdownImagePattern = /!\[([^\]]*)\]\((\/assets\/[^)\s]+)\)(?:\s+Codex image description:\s*([^\n]+))?/g;
 const localImageLinePattern = /### Image \d+:\s*([^\n]+)\nLocal image:\s*(\/assets\/[^\n]+)\nOriginal image:\s*([^\n]+)\nCodex image description:\s*([^\n]+)/g;
 const markdownLinkPattern = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+const emojiPattern = /(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}(?:\uFE0E|\uFE0F)?\p{Emoji_Modifier}?(?:\u200D\p{Extended_Pictographic}(?:\uFE0E|\uFE0F)?\p{Emoji_Modifier}?)*)/gu;
 
-export function preserveGeneratedConnections(html: string, sourceMarkdown: string): string {
-  const rewritten = rewriteNotionHrefAttributes(html);
+export function preserveGeneratedConnections(
+  html: string,
+  sourceMarkdown: string,
+  sourceNotionUrl?: string,
+): string {
+  const rewritten = rewriteNotionHrefAttributes(html, sourceNotionUrl);
   const additions = [
     missingImagesHtml(rewritten, sourceMarkdown),
     missingNotionLinksHtml(rewritten, sourceMarkdown),
@@ -29,11 +34,24 @@ export function preserveGeneratedConnections(html: string, sourceMarkdown: strin
   return `${rewritten.slice(0, mainEnd)}\n${additions}\n${rewritten.slice(mainEnd)}`;
 }
 
-function rewriteNotionHrefAttributes(html: string): string {
+function rewriteNotionHrefAttributes(html: string, sourceNotionUrl?: string): string {
   return html.replace(/\shref=(["'])(https?:\/\/[^"']*notion[^"']*)\1/gi, (match, quote: string, url: string) => {
     if (!isRoutableNotionPageUrl(url)) return match;
+    if (sourceNotionUrl && isSameNotionPage(url, sourceNotionUrl)) return match;
     return ` href=${quote}${localNotionHref(url)}${quote}`;
   });
+}
+
+function isSameNotionPage(url: string, sourceNotionUrl: string): boolean {
+  try {
+    return normalizePageId(parseNotionPageId(url)) === normalizePageId(parseNotionPageId(sourceNotionUrl));
+  } catch {
+    return false;
+  }
+}
+
+function normalizePageId(pageId: string): string {
+  return pageId.replaceAll("-", "").toLowerCase();
 }
 
 function missingImagesHtml(html: string, markdown: string): string {
@@ -60,9 +78,13 @@ function missingNotionLinksHtml(html: string, markdown: string): string {
   return `<section class="linked-pages">
   <div class="shead"><span class="sec-label">LINKED PAGES</span><h2>Connected Notion pages are preserved</h2></div>
   <div class="story">
-    ${links.map((link) => `<p><a href="${escapeAttribute(localNotionHref(link.url))}">${escapeHtml(link.label)}</a></p>`).join("\n")}
+    ${links.map((link) => `<p><a href="${escapeAttribute(localNotionHref(link.url))}">${escapeHtml(referenceLabel(link))}</a></p>`).join("\n")}
   </div>
 </section>`;
+}
+
+function referenceLabel(link: NotionLinkConnection): string {
+  return link.label.replace(emojiPattern, "").replace(/\s+/g, " ").trim() || link.url;
 }
 
 function extractImageConnections(markdown: string): MarkdownImageConnection[] {

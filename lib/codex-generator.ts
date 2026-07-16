@@ -16,7 +16,7 @@ const legacyCodexGenerationArgs = [
   'model_reasoning_effort="xhigh"',
 ] as const;
 const aiGatewayBaseUrl = "https://aigateway.inevitable.tech/v1";
-const aiGatewayModel = "cx/gpt-5.6-sol-high";
+const aiGatewayModel = "cx/gpt-5.6-terra-xhigh";
 
 function codexGenerationArgs(): readonly string[] {
   if (!optionalEnv("AI_GATEWAY_API_KEY")) return legacyCodexGenerationArgs;
@@ -238,7 +238,7 @@ async function generateHtmlWithCodex(input: {
 
     const { stdout, stderr } = normalizeExecResult(result);
     const raw = await readCodexHtmlArtifact([artifactPath, outputPath], stdout, stderr);
-    const html = preserveGeneratedConnections(sanitizeGeneratedHtml(raw), input.markdown);
+    const html = preserveGeneratedConnections(sanitizeGeneratedHtml(raw), input.markdown, input.notionUrl);
 
     if (!hasSourceCoverage(html, input.markdown)) {
       return renderHtmlBody(documentFromMarkdown(input));
@@ -322,6 +322,7 @@ function documentToHtmlPrompt(
     "- Preserve /assets/... local image URLs exactly when including source images.",
     "- Use Codex image descriptions from notion.md as factual visual context. Include product demos, UI screenshots, photos, and mechanism visuals directly when they help readers inspect the source. For charts and graphs, either re-render the message as a clean chart/table or summarize the text if the image is too noisy.",
     "- Preserve all linked Notion subpages from notion.md. Include them as source links, related pages, appendix links, or detail rows, but do not drop the connection.",
+    "- In references, source links, related pages, and appendix sections, omit emoji from visible labels. Preserve the linked text and URL.",
     "- Use native <details class=\"x\"> rows for depth. The page should be skimmable first and expandable second.",
     "",
     ...notionDatabasePromptLines(notionUrl, markdown),
@@ -338,6 +339,12 @@ function documentToHtmlPrompt(
     "- Prefer assertion headings over labels, written in the output language.",
     "- Use one terracotta focal element per card or chart. Do not make the whole page orange.",
     "- Cut internal notes, self-coaching, QA prompts, and sensitive deal terms unless the source clearly frames them as public-facing.",
+    "",
+    "Contrast checklist (blocking before writing the artifact):",
+    "- Verify every computed foreground and effective background pair in the served app shell, including nested p, blockquote, strong, b, a, labels, pills, captions, table cells, and SVG text.",
+    "- Normal text must reach at least 4.5:1 contrast. Large text must reach at least 3:1. Do not round a failing ratio up.",
+    "- Light text is allowed only on a reliably dark surface. On inverse cards, explicitly keep nested semantic elements transparent with color: inherit so host styles cannot turn them into light-on-light text.",
+    "- Check default, hover, focus, open details, and disabled states at desktop and about 380px width. Do not ship any invisible or barely readable text.",
     "",
     "Required CSS base and components to include inside <style data-document-to-html>:",
     documentToHtmlCss(),

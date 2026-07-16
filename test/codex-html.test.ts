@@ -52,10 +52,15 @@ describe("Codex document-to-html generation", () => {
     expect(prompt).toContain("warm paper");
     expect(prompt).toContain("terracotta");
     expect(prompt).toContain("details class=\"x\"");
+    expect(prompt).toContain("Contrast checklist");
+    expect(prompt).toContain("4.5:1");
+    expect(prompt).toContain("3:1");
+    expect(prompt).toContain("computed foreground and effective background");
+    expect(prompt).toContain("omit emoji from visible labels");
     expect(prompt).not.toMatch(/font-size:\s*[^;]*vw/i);
     expect(prompt).not.toMatch(/letter-spacing:\s*-/i);
     expect(calls[0].args).toContain("--model");
-    expect(calls[0].args[calls[0].args.indexOf("--model") + 1]).toBe("cx/gpt-5.6-sol-high");
+    expect(calls[0].args[calls[0].args.indexOf("--model") + 1]).toBe("cx/gpt-5.6-terra-xhigh");
     expect(calls[0].args).toContain("model_provider=\"inevitable_gateway\"");
     expect(calls[0].args).toContain(
       'model_providers.inevitable_gateway.base_url="https://aigateway.inevitable.tech/v1"',

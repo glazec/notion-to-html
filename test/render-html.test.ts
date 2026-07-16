@@ -55,6 +55,22 @@ describe("HTML rendering", () => {
     expect(html).toContain("body img, body svg, body video, body canvas, body iframe { max-width: 100%; height: auto; }");
   });
 
+  it("does not override nested generated blockquote backgrounds", () => {
+    const html = wrapServedHtml({
+      title: "Contrast",
+      notionUrl: "https://notion.so/test",
+      regeneratePath: "/api/pages/abc/regenerate",
+      body: '<main class="document-html-page"><div class="quote-card"><blockquote>Readable text</blockquote></div></main>',
+      pageState: {
+        status: "ready",
+        generatedAt: new Date(),
+      },
+    });
+
+    expect(html).toContain(".nth-content > blockquote {");
+    expect(html).not.toContain("\nblockquote { margin:");
+  });
+
   it("sets the served shell language to Chinese when the content is Chinese", () => {
     const html = wrapServedHtml({
       title: "硅谷与亚洲早期资本",
