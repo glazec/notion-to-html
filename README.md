@@ -9,7 +9,7 @@ Railway Web API with /api/inngest
 Railway Postgres
 Railway Bucket
 Inngest Cloud
-Codex CLI with CODEX_ACCESS_TOKEN for remote document JSON generation
+Codex CLI through the Inevitable AI Gateway for remote document generation
 ```
 
 Generation flow:
@@ -39,15 +39,14 @@ SECRET_ACCESS_KEY
 NOTION_API_KEY
 INNGEST_EVENT_KEY
 INNGEST_SIGNING_KEY
-CODEX_ACCESS_TOKEN or CODEX_AUTH_JSON_BASE64
+AI_GATEWAY_API_KEY
 ```
 
-`CODEX_ACCESS_TOKEN` is preferred for `codex exec` noninteractive generation. If
-you cannot create a Codex access token, set `CODEX_AUTH_JSON_BASE64` to a base64
-encoded Codex `auth.json`. The app writes that value to a temporary `CODEX_HOME`
-only while a generation job is running. If no Codex credential is configured,
-local development falls back to a deterministic markdown to document JSON
-converter.
+`AI_GATEWAY_API_KEY` runs Codex through the configured Responses API gateway and
+does not depend on ChatGPT OAuth refresh tokens. `CODEX_ACCESS_TOKEN` and
+`CODEX_AUTH_JSON_BASE64` remain supported as legacy local fallbacks. If no Codex
+credential is configured, local development falls back to a deterministic
+markdown to document JSON converter.
 
 ## Development
 

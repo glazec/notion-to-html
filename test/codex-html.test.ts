@@ -5,7 +5,8 @@ describe("Codex document-to-html generation", () => {
   it("uses the document-to-html skill prompt and returns a sanitized HTML body", async () => {
     vi.resetModules();
     vi.unstubAllEnvs();
-    vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+    vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key");
+    vi.stubEnv("CODEX_ACCESS_TOKEN", "legacy-token");
     vi.stubEnv("DATABASE_URL", "postgres://user:password@example.com/app");
     vi.stubEnv("FIRECRAWL_API_KEY", "fc-secret");
     vi.stubEnv("NOTION_API_KEY", "ntn-secret");
@@ -54,10 +55,16 @@ describe("Codex document-to-html generation", () => {
     expect(prompt).not.toMatch(/font-size:\s*[^;]*vw/i);
     expect(prompt).not.toMatch(/letter-spacing:\s*-/i);
     expect(calls[0].args).toContain("--model");
-    expect(calls[0].args[calls[0].args.indexOf("--model") + 1]).toBe("gpt-5.6-terra");
-    expect(calls[0].args).toContain("model_reasoning_effort=\"xhigh\"");
+    expect(calls[0].args[calls[0].args.indexOf("--model") + 1]).toBe("cx/gpt-5.6-sol-high");
+    expect(calls[0].args).toContain("model_provider=\"inevitable_gateway\"");
+    expect(calls[0].args).toContain(
+      'model_providers.inevitable_gateway.base_url="https://aigateway.inevitable.tech/v1"',
+    );
+    expect(calls[0].args).toContain('model_providers.inevitable_gateway.env_key="AI_GATEWAY_API_KEY"');
+    expect(calls[0].args).toContain('model_providers.inevitable_gateway.wire_api="responses"');
     expect(calls[0].options.timeout).toBeGreaterThanOrEqual(10 * 60 * 1000);
-    expect(calls[0].options.env?.CODEX_ACCESS_TOKEN).toBe("token");
+    expect(calls[0].options.env?.AI_GATEWAY_API_KEY).toBe("gateway-key");
+    expect(calls[0].options.env?.CODEX_ACCESS_TOKEN).toBeUndefined();
     expect(calls[0].options.env?.CODEX_HOME).toContain("notion-to-html-codex-");
     expect(calls[0].options.env?.HOME).toBe(calls[0].options.env?.CODEX_HOME);
     expect(calls[0].options.env?.HOME).not.toBe(process.env.HOME);

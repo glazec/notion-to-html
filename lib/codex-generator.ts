@@ -9,12 +9,33 @@ import { optionalEnv } from "@/lib/env";
 import { preserveGeneratedConnections } from "@/lib/generated-connections";
 import { renderHtmlBody } from "@/lib/render-html";
 
-const codexGenerationArgs = [
+const legacyCodexGenerationArgs = [
   "--model",
   "gpt-5.6-terra",
   "-c",
   'model_reasoning_effort="xhigh"',
 ] as const;
+const aiGatewayBaseUrl = "https://aigateway.inevitable.tech/v1";
+const aiGatewayModel = "cx/gpt-5.6-sol-high";
+
+function codexGenerationArgs(): readonly string[] {
+  if (!optionalEnv("AI_GATEWAY_API_KEY")) return legacyCodexGenerationArgs;
+
+  return [
+    "--model",
+    aiGatewayModel,
+    "-c",
+    'model_provider="inevitable_gateway"',
+    "-c",
+    'model_providers.inevitable_gateway.name="Inevitable AI Gateway"',
+    "-c",
+    `model_providers.inevitable_gateway.base_url="${aiGatewayBaseUrl}"`,
+    "-c",
+    'model_providers.inevitable_gateway.env_key="AI_GATEWAY_API_KEY"',
+    "-c",
+    'model_providers.inevitable_gateway.wire_api="responses"',
+  ];
+}
 
 const outputSchema = {
   type: "object",
@@ -116,7 +137,8 @@ function shouldUseCodex(): boolean {
 
 function hasCodexCredentials(): boolean {
   return Boolean(
-    optionalEnv("CODEX_ACCESS_TOKEN") ||
+    optionalEnv("AI_GATEWAY_API_KEY") ||
+      optionalEnv("CODEX_ACCESS_TOKEN") ||
       optionalEnv("CODEX_AUTH_JSON") ||
       optionalEnv("CODEX_AUTH_JSON_BASE64"),
   );
@@ -152,7 +174,7 @@ async function generateWithCodex(input: {
       codexBin,
       [
         "exec",
-        ...codexGenerationArgs,
+        ...codexGenerationArgs(),
         "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",
@@ -196,7 +218,7 @@ async function generateHtmlWithCodex(input: {
       codexBin,
       [
         "exec",
-        ...codexGenerationArgs,
+        ...codexGenerationArgs(),
         "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",
@@ -243,7 +265,7 @@ async function describeImageWithCodex(input: {
       codexBin,
       [
         "exec",
-        ...codexGenerationArgs,
+        ...codexGenerationArgs(),
         "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",
@@ -864,6 +886,11 @@ function codexProcessEnv(authEnv: Record<string, string>): NodeJS.ProcessEnv {
 async function prepareCodexAuthEnv(workDir: string): Promise<Record<string, string>> {
   const codexHome = join(workDir, "codex-home");
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
+
+  const gatewayApiKey = optionalEnv("AI_GATEWAY_API_KEY");
+  if (gatewayApiKey) {
+    return { AI_GATEWAY_API_KEY: gatewayApiKey, CODEX_HOME: codexHome, HOME: codexHome };
+  }
 
   const accessToken = optionalEnv("CODEX_ACCESS_TOKEN");
   if (accessToken) {
