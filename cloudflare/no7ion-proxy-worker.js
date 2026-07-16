@@ -15,6 +15,12 @@ export default {
     if (incomingUrl.hostname.toLowerCase() === NOTION_ALIAS_HOST && incomingUrl.pathname.startsWith("/p/")) {
       originUrl.pathname = `/https:/app.notion.com${incomingUrl.pathname}`;
       originUrl.search = incomingUrl.search;
+    } else {
+      const workspace = notionSiteWorkspaceFromAlias(incomingUrl.hostname);
+      if (workspace) {
+        originUrl.pathname = `/https:/${workspace}.notion.site${incomingUrl.pathname}`;
+        originUrl.search = incomingUrl.search;
+      }
     }
 
     const headers = new Headers(request.headers);
@@ -33,6 +39,10 @@ export default {
     return rewriteResponse(response);
   },
 };
+
+function notionSiteWorkspaceFromAlias(hostname) {
+  return hostname.toLowerCase().match(/^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\.no7ion\.com$/)?.[1] ?? null;
+}
 
 function rewriteResponse(response) {
   const headers = new Headers(response.headers);

@@ -9,6 +9,13 @@ import { optionalEnv } from "@/lib/env";
 import { preserveGeneratedConnections } from "@/lib/generated-connections";
 import { renderHtmlBody } from "@/lib/render-html";
 
+const codexGenerationArgs = [
+  "--model",
+  "gpt-5.6-terra",
+  "-c",
+  'model_reasoning_effort="xhigh"',
+] as const;
+
 const outputSchema = {
   type: "object",
   additionalProperties: false,
@@ -145,6 +152,7 @@ async function generateWithCodex(input: {
       codexBin,
       [
         "exec",
+        ...codexGenerationArgs,
         "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",
@@ -188,6 +196,7 @@ async function generateHtmlWithCodex(input: {
       codexBin,
       [
         "exec",
+        ...codexGenerationArgs,
         "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",
@@ -234,6 +243,7 @@ async function describeImageWithCodex(input: {
       codexBin,
       [
         "exec",
+        ...codexGenerationArgs,
         "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",

@@ -53,6 +53,9 @@ describe("Codex document-to-html generation", () => {
     expect(prompt).toContain("details class=\"x\"");
     expect(prompt).not.toMatch(/font-size:\s*[^;]*vw/i);
     expect(prompt).not.toMatch(/letter-spacing:\s*-/i);
+    expect(calls[0].args).toContain("--model");
+    expect(calls[0].args[calls[0].args.indexOf("--model") + 1]).toBe("gpt-5.6-terra");
+    expect(calls[0].args).toContain("model_reasoning_effort=\"xhigh\"");
     expect(calls[0].options.timeout).toBeGreaterThanOrEqual(10 * 60 * 1000);
     expect(calls[0].options.env?.CODEX_ACCESS_TOKEN).toBe("token");
     expect(calls[0].options.env?.CODEX_HOME).toContain("notion-to-html-codex-");
