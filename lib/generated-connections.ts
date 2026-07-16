@@ -1,9 +1,11 @@
 import { isNotionUrl, parseNotionPageId } from "@/lib/notion";
+import { isDecorativeEmojiImage, stripEmoji } from "@/lib/image-filter";
 
 type MarkdownImageConnection = {
   alt: string;
   localUrl: string;
   description: string;
+  sourceUrl?: string;
 };
 
 type NotionLinkConnection = {
@@ -14,7 +16,6 @@ type NotionLinkConnection = {
 const markdownImagePattern = /!\[([^\]]*)\]\((\/assets\/[^)\s]+)\)(?:\s+Codex image description:\s*([^\n]+))?/g;
 const localImageLinePattern = /### Image \d+:\s*([^\n]+)\nLocal image:\s*(\/assets\/[^\n]+)\nOriginal image:\s*([^\n]+)\nCodex image description:\s*([^\n]+)/g;
 const markdownLinkPattern = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
-const emojiPattern = /(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}(?:\uFE0E|\uFE0F)?\p{Emoji_Modifier}?(?:\u200D\p{Extended_Pictographic}(?:\uFE0E|\uFE0F)?\p{Emoji_Modifier}?)*)/gu;
 
 export function preserveGeneratedConnections(
   html: string,
@@ -84,7 +85,7 @@ function missingNotionLinksHtml(html: string, markdown: string): string {
 }
 
 function referenceLabel(link: NotionLinkConnection): string {
-  return link.label.replace(emojiPattern, "").replace(/\s+/g, " ").trim() || link.url;
+  return stripEmoji(link.label).replace(/\s+/g, " ").trim() || link.url;
 }
 
 function extractImageConnections(markdown: string): MarkdownImageConnection[] {
@@ -99,13 +100,15 @@ function extractImageConnections(markdown: string): MarkdownImageConnection[] {
     .map((match) => ({
       alt: match[1]?.trim() || "Image",
       localUrl: match[2],
+      sourceUrl: match[3]?.trim(),
       description: match[4]?.trim() || "Source image from the Notion page.",
     }));
 
   const seen = new Set<string>();
-  return [...fromImageBlocks, ...fromAssetSection].filter((image) => {
+  return [...fromAssetSection, ...fromImageBlocks].filter((image) => {
     if (seen.has(image.localUrl)) return false;
     seen.add(image.localUrl);
+    if (isDecorativeEmojiImage(image)) return false;
     return true;
   });
 }

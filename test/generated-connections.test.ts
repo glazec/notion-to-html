@@ -60,6 +60,36 @@ describe("generated HTML connections", () => {
     expect(output).not.toContain("🔬");
   });
 
+  it("omits Notion emoji assets from fallback visual references", async () => {
+    const { preserveGeneratedConnections } = await import("@/lib/generated-connections");
+    const output = preserveGeneratedConnections(
+      '<style data-document-to-html></style><main class="document-html-page wrap"></main>',
+      [
+        "# Kiln",
+        "![🔥 Page icon](/assets/pages/page-id/images/fire.svg)",
+        "![Image 1](/assets/pages/page-id/images/emoji-sprite.webp)",
+        "![Operating chart](/assets/pages/page-id/images/chart.png)",
+        "### Image 1: 🔥 Page icon",
+        "Local image: /assets/pages/page-id/images/fire.svg",
+        "Original image: https://notion-emojis.s3-us-west-2.amazonaws.com/prod/svg-twitter/1f525.svg",
+        "Codex image description: 🔥 Page icon",
+        "### Image 2: Image 1",
+        "Local image: /assets/pages/page-id/images/emoji-sprite.webp",
+        "Original image: https://iosgvc.notion.site/images/emoji/twitter-emoji-spritesheet-32.0e67dbfc.webp",
+        "Codex image description: Image 1",
+        "### Image 3: Operating chart",
+        "Local image: /assets/pages/page-id/images/chart.png",
+        "Original image: https://example.com/kiln-chart.png",
+        "Codex image description: A chart showing Kiln operating performance.",
+      ].join("\n"),
+    );
+
+    expect(output).not.toContain("🔥 Page icon");
+    expect(output).not.toContain("emoji-sprite.webp");
+    expect(output).toContain("Operating chart");
+    expect(output).toContain("A chart showing Kiln operating performance.");
+  });
+
   it("keeps an image description even when Codex already included the image", async () => {
     const { preserveGeneratedConnections } = await import("@/lib/generated-connections");
     const output = preserveGeneratedConnections(

@@ -8,6 +8,7 @@ import { dirname, extname, join } from "node:path";
 import { Agent, fetch as undiciFetch } from "undici";
 import { putBinaryObject } from "@/lib/bucket";
 import { describeImageAsset } from "@/lib/codex-generator";
+import { isDecorativeEmojiImage } from "@/lib/image-filter";
 
 type SourceImage = {
   alt: string;
@@ -50,14 +51,19 @@ export async function prepareSourceAssets(input: {
   images: StoredImage[];
   skippedImages: SkippedImage[];
 }> {
-  const images = uniqueImages(extractMarkdownImages(input.markdown)).slice(0, 20);
+  const extractedImages = uniqueImages(extractMarkdownImages(input.markdown));
+  const ignoredImages = extractedImages.filter(isDecorativeEmojiImage);
+  const images = extractedImages.filter((image) => !isDecorativeEmojiImage(image)).slice(0, 20);
+  let markdown = ignoredImages.reduce(
+    (value, image) => removeImageMarkdown(value, image, ""),
+    input.markdown,
+  );
   if (images.length === 0) {
-    return { markdown: input.markdown, images: [], skippedImages: [] };
+    return { markdown, images: [], skippedImages: [] };
   }
 
   const storedImages: StoredImage[] = [];
   const skippedImages: SkippedImage[] = [];
-  let markdown = input.markdown;
 
   for (const image of images) {
     try {
@@ -163,9 +169,13 @@ function appendImageDescriptions(
   ].join("\n\n");
 }
 
-function removeImageMarkdown(markdown: string, image: SourceImage): string {
+function removeImageMarkdown(
+  markdown: string,
+  image: SourceImage,
+  replacement = `[Skipped image: ${image.alt}]`,
+): string {
   const imagePattern = new RegExp(`!\\[[^\\]]*\\]\\(${escapeRegExp(image.sourceUrl)}\\)`, "g");
-  return markdown.replace(imagePattern, `[Skipped image: ${image.alt}]`);
+  return markdown.replace(imagePattern, replacement);
 }
 
 function imageSkipReason(error: unknown): string {

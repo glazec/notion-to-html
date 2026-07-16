@@ -73,6 +73,35 @@ describe("source asset preparation", () => {
     expect(result.markdown).toContain("Codex image description: A product demo showing the 1Money settlement workflow.");
   });
 
+  it("ignores Notion emoji assets while preserving content images", async () => {
+    undiciFetch.mockResolvedValue(new Response(pngBytes, {
+      status: 200,
+      headers: { "content-type": "image/png" },
+    }));
+    describeImageAsset.mockResolvedValue("A chart showing Kiln operating performance.");
+
+    const { prepareSourceAssets } = await import("@/lib/source-assets");
+    const result = await prepareSourceAssets({
+      pageId: "39ff0ada243c8119a001f298e80309d1",
+      markdown: [
+        "# Kiln",
+        "![🔥 Page icon](https://notion-emojis.s3-us-west-2.amazonaws.com/prod/svg-twitter/1f525.svg)",
+        "![Image 1](https://iosgvc.notion.site/images/emoji/twitter-emoji-spritesheet-32.0e67dbfc.webp)",
+        "![Operating chart](https://example.com/kiln-chart.png)",
+      ].join("\n\n"),
+    });
+
+    expect(undiciFetch).toHaveBeenCalledOnce();
+    expect(describeImageAsset).toHaveBeenCalledOnce();
+    expect(result.images).toHaveLength(1);
+    expect(result.images[0]).toMatchObject({ alt: "Operating chart" });
+    expect(result.skippedImages).toEqual([]);
+    expect(result.markdown).not.toContain("🔥 Page icon");
+    expect(result.markdown).not.toContain("notion-emojis");
+    expect(result.markdown).not.toContain("twitter-emoji-spritesheet");
+    expect(result.markdown).toContain("Operating chart");
+  });
+
   it("skips private network image URLs before fetching", async () => {
     const { prepareSourceAssets } = await import("@/lib/source-assets");
     const result = await prepareSourceAssets({
