@@ -1,4 +1,4 @@
-import { ArrowRight, ExternalLink } from "lucide-react";
+import { ArrowRight, ExternalLink, Search } from "lucide-react";
 import type { PageRecord } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth/server";
 import { AuthButton } from "@/app/auth-button";
@@ -26,19 +26,18 @@ export default async function HomePage({
           <span>Notion to HTML</span>
         </a>
         <nav className="topnav" aria-label="Primary navigation">
-          <a href="#process">Process</a>
-          <a href="#roadmap">Roadmap</a>
+          <a href="#features">Features</a>
+          {user && <a href="#sites">Your sites</a>}
           <AuthButton userEmail={user?.email ?? null} />
         </nav>
       </header>
 
       <section className="hero-search">
         <div className="hero-copy">
-          <p className="eyebrow">PUBLIC NOTION PUBLISHER · EARLY ACCESS</p>
-          <h1>Your thinking,<br /><em>ready for the web.</em></h1>
+          <h1>Turn public Notion pages into clean HTML.</h1>
           <p className="hero-lede">
-            Turn a public Notion page into a carefully typeset website. Images,
-            source links, tables, and diagrams stay connected to the original.
+            Paste a public Notion URL. We generate a shareable website, preserve
+            its content and images, and cache it for fast loading.
           </p>
 
           {notice === "sign-in-required" && (
@@ -47,8 +46,8 @@ export default async function HomePage({
 
           {user ? (
             <form action="/api/pages" method="post" className="create-form">
-              <label htmlFor="notion-url">Public Notion URL</label>
               <div className="search-row">
+                <Search size={18} aria-hidden="true" />
                 <input
                   id="notion-url"
                   className="url-input"
@@ -72,37 +71,24 @@ export default async function HomePage({
           )}
 
           <div className="proof-row" aria-label="Available features">
-            <span>Public pages</span>
-            <span>Source images</span>
-            <span>Kami inspired diagrams</span>
-            <span>Fast cached HTML</span>
+            <span>Public pages only</span>
+            <span>Images preserved</span>
+            <span>Cached HTML</span>
           </div>
         </div>
       </section>
 
-      <section className="process-section" id="process">
+      <section className="landing-main" id="features">
         <div className="section-heading">
-          <p className="eyebrow">01 · PROCESS</p>
-          <h2>One clear path from note to site.</h2>
-          <p>Structure is preserved first. Presentation comes second.</p>
-        </div>
-        <div className="process-diagram" role="img" aria-label="Notion content flows through source capture, document shaping, account limits, and public HTML publishing">
-          <ProcessNode index="01" label="SOURCE" title="Notion" detail="Text · media · links" />
-          <ProcessNode index="02" label="SHAPE" title="Codex" detail="Hierarchy · diagrams" focal />
-          <ProcessNode index="03" label="GUARD" title="Neon" detail="Identity · daily quota" />
-          <ProcessNode index="04" label="PUBLISH" title="HTML" detail="Cached · shareable" />
-        </div>
-        <p className="diagram-caption">A generated page carries the source’s identity, never ours.</p>
-      </section>
-
-      <section className="roadmap-section" id="roadmap">
-        <div className="section-heading">
-          <p className="eyebrow">02 · ROADMAP</p>
-          <h2>Publishing is live. The workflow gets quieter next.</h2>
+          <div>
+            <p className="section-label">Features</p>
+            <h2>Simple publishing now. More control next.</h2>
+          </div>
+          <p>Generated Notion pages use a clean editorial theme. More publishing controls are on the way.</p>
         </div>
         <div className="feature-grid">
           <Feature status="LIVE" title="Generate and publish" body="Create a permanent public page from a public Notion URL." />
-          <Feature status="COMING" title="Automatic updates" body="Republish when the source changes, without a manual refresh." />
+          <Feature status="COMING" title="Automatic updates" body="Republish when the source changes without a manual refresh." />
           <Feature status="COMING" title="Pre generation" body="Prepare the next version before readers request it." />
           <Feature status="COMING" title="Custom themes" body="Choose typography, color, density, and diagram treatment." />
         </div>
@@ -110,21 +96,39 @@ export default async function HomePage({
 
       {user && (
         <section className="sites-section" id="sites">
-          <div className="section-heading compact">
-            <p className="eyebrow">03 · YOUR SITES</p>
-            <h2>Published from this account.</h2>
+          <div className="panel-heading">
+            <div>
+              <p className="section-label">Your sites</p>
+              <h2>Published from this account</h2>
+            </div>
+            <span>{pages.length} total</span>
           </div>
           {pages.length > 0 ? (
-            <div className="site-list">
-              {pages.map((page, index) => (
-                <a className="site-row" href={`/${page.slug}`} key={page.page_key}>
-                  <span className="site-index">{String(index + 1).padStart(2, "0")}</span>
-                  <span className="site-title">{page.slug}</span>
-                  <span className={`status ${page.status}`}>{page.status}</span>
-                  <span className="site-date">{formatDate(page.updated_at)}</span>
-                  <ExternalLink size={16} aria-hidden="true" />
-                </a>
-              ))}
+            <div className="site-table-wrap">
+              <table className="page-table">
+                <thead>
+                  <tr>
+                    <th>Page</th>
+                    <th>Status</th>
+                    <th>Updated</th>
+                    <th><span className="sr-only">Open</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pages.map((page) => (
+                    <tr key={page.page_key}>
+                      <td><a className="site-title" href={`/${page.slug}`}>{page.slug}</a></td>
+                      <td><span className={`status ${page.status}`}>{page.status}</span></td>
+                      <td className="muted">{formatDate(page.updated_at)}</td>
+                      <td>
+                        <a className="icon-button" href={`/${page.slug}`} aria-label={`Open ${page.slug}`}>
+                          <ExternalLink size={16} aria-hidden="true" />
+                        </a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : (
             <div className="empty">Your first published page will appear here.</div>
@@ -134,32 +138,9 @@ export default async function HomePage({
 
       <footer className="footer">
         <span>Notion to HTML</span>
-        <span>Made for durable, readable publishing.</span>
+        <span>Two free sites every day. Unlimited for IOSG accounts.</span>
       </footer>
     </main>
-  );
-}
-
-function ProcessNode({
-  index,
-  label,
-  title,
-  detail,
-  focal = false,
-}: {
-  index: string;
-  label: string;
-  title: string;
-  detail: string;
-  focal?: boolean;
-}) {
-  return (
-    <div className={`process-node${focal ? " focal" : ""}`}>
-      <span className="node-index">{index}</span>
-      <span className="node-label">{label}</span>
-      <strong>{title}</strong>
-      <small>{detail}</small>
-    </div>
   );
 }
 
