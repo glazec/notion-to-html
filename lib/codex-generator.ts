@@ -1,29 +1,31 @@
+import { createHash } from "node:crypto";
 import { execFile, type ExecFileOptions } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sanitizeHtml from "sanitize-html";
+import { putBinaryObject } from "@/lib/bucket";
 import { documentFromMarkdown, parseDocumentJson, type DocumentHtmlJson } from "@/lib/document";
 import type { PageLanguage } from "@/lib/db";
 import { optionalEnv } from "@/lib/env";
 import { preserveGeneratedConnections } from "@/lib/generated-connections";
 import { renderHtmlBody } from "@/lib/render-html";
 
-const legacyCodexGenerationArgs = [
-  "--model",
-  "gpt-5.6-terra",
-  "-c",
-  'model_reasoning_effort="xhigh"',
-] as const;
 const aiGatewayBaseUrl = "https://aigateway.inevitable.tech/v1";
-const aiGatewayModel = "cx/gpt-5.6-terra-xhigh";
 
-function codexGenerationArgs(): readonly string[] {
-  if (!optionalEnv("AI_GATEWAY_API_KEY")) return legacyCodexGenerationArgs;
+function codexGenerationArgs(reasoningEffort: "low" | "medium" = "medium"): readonly string[] {
+  if (!optionalEnv("AI_GATEWAY_API_KEY")) {
+    return [
+      "--model",
+      "gpt-5.6-terra",
+      "-c",
+      `model_reasoning_effort="${reasoningEffort}"`,
+    ];
+  }
 
   return [
     "--model",
-    aiGatewayModel,
+    `cx/gpt-5.6-terra-${reasoningEffort}`,
     "-c",
     'model_provider="inevitable_gateway"',
     "-c",
@@ -106,12 +108,13 @@ export async function generateDocumentHtmlBody(input: {
   markdown: string;
   notionUrl: string;
   targetLanguage?: PageLanguage;
+  pageId?: string;
 }): Promise<string> {
   if (optionalEnv("CODEX_GENERATION_ENABLED") !== "false" && hasCodexCredentials()) {
-    return generateHtmlWithCodex(input);
+    return removeIosgLogoImages(await generateHtmlWithCodex(input));
   }
 
-  return renderHtmlBody(documentFromMarkdown(input));
+  return removeIosgLogoImages(renderHtmlBody(documentFromMarkdown(input)));
 }
 
 export async function describeImageAsset(input: {
@@ -174,7 +177,7 @@ async function generateWithCodex(input: {
       codexBin,
       [
         "exec",
-        ...codexGenerationArgs(),
+        ...codexGenerationArgs("medium"),
         "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",
@@ -203,22 +206,25 @@ async function generateHtmlWithCodex(input: {
   markdown: string;
   notionUrl: string;
   targetLanguage?: PageLanguage;
+  pageId?: string;
 }): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "notion-to-html-codex-"));
   const markdownPath = join(dir, "notion.md");
   const artifactPath = join(dir, "artifact.html");
   const outputPath = join(dir, "last-message.html");
+  const generatedAssetsPath = join(dir, "generated-assets");
   const codexBin = codexBinaryPath();
   const authEnv = await prepareCodexAuthEnv(dir);
 
   try {
+    await mkdir(generatedAssetsPath, { recursive: true });
     await writeFile(markdownPath, input.markdown, "utf8");
 
     const result = await execFileNoStdin(
       codexBin,
       [
         "exec",
-        ...codexGenerationArgs(),
+        ...codexGenerationArgs("medium"),
         "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",
@@ -226,7 +232,13 @@ async function generateHtmlWithCodex(input: {
         dir,
         "-o",
         outputPath,
-        documentToHtmlPrompt(input.notionUrl, "artifact.html", input.markdown, input.targetLanguage ?? "auto"),
+        documentToHtmlPrompt(
+          input.notionUrl,
+          "artifact.html",
+          input.markdown,
+          input.targetLanguage ?? "auto",
+          Boolean(input.pageId),
+        ),
       ],
       {
         cwd: dir,
@@ -238,7 +250,15 @@ async function generateHtmlWithCodex(input: {
 
     const { stdout, stderr } = normalizeExecResult(result);
     const raw = await readCodexHtmlArtifact([artifactPath, outputPath], stdout, stderr);
-    const html = preserveGeneratedConnections(sanitizeGeneratedHtml(raw), input.markdown, input.notionUrl);
+    const withGeneratedAssets = input.pageId
+      ? await persistGeneratedDiagramAssets({
+          html: raw,
+          generatedAssetsPath,
+          pageId: input.pageId,
+          requiredMermaidCount: countMermaidBlocks(input.markdown),
+        })
+      : raw;
+    const html = preserveGeneratedConnections(sanitizeGeneratedHtml(withGeneratedAssets), input.markdown, input.notionUrl);
 
     if (!hasSourceCoverage(html, input.markdown)) {
       return renderHtmlBody(documentFromMarkdown(input));
@@ -265,7 +285,7 @@ async function describeImageWithCodex(input: {
       codexBin,
       [
         "exec",
-        ...codexGenerationArgs(),
+        ...codexGenerationArgs("low"),
         "--skip-git-repo-check",
         "--sandbox",
         "workspace-write",
@@ -307,6 +327,7 @@ function documentToHtmlPrompt(
   artifactFile: string,
   markdown: string,
   targetLanguage: PageLanguage,
+  generatedAssetOutputEnabled: boolean,
 ): string {
   return [
     "Use the document-to-html skill to convert notion.md into a polished HTML page.",
@@ -318,9 +339,11 @@ function documentToHtmlPrompt(
     "- The final answer must be only the HTML artifact. No markdown fences, explanation, JSON, or comments.",
     "- Return a body artifact for an existing app shell: include one <style data-document-to-html> tag and one <main class=\"document-html-page wrap\"> root.",
     "- Do not include <!doctype>, <html>, <head>, <body>, <script>, iframe, object, embed, external CSS, external JS, or CDN fonts.",
+    "- Do not include the IOSG name, IOSG logo, IOSG wordmark, or any publisher branding that is not present as source content. Never invent a logo.",
     "- Preserve public image URLs as <img> when useful. Preserve source links with normal <a href> links.",
     "- Preserve /assets/... local image URLs exactly when including source images.",
     "- Use Codex image descriptions from notion.md as factual visual context. Include product demos, UI screenshots, photos, and mechanism visuals directly when they help readers inspect the source. For charts and graphs, either re-render the message as a clean chart/table or summarize the text if the image is too noisy.",
+    ...generatedDiagramPromptLines(markdown, generatedAssetOutputEnabled),
     "- Preserve all linked Notion subpages from notion.md. Include them as source links, related pages, appendix links, or detail rows, but do not drop the connection.",
     "- In references, source links, related pages, and appendix sections, omit emoji from visible labels. Preserve the linked text and URL.",
     "- Use native <details class=\"x\"> rows for depth. The page should be skimmable first and expandable second.",
@@ -332,12 +355,13 @@ function documentToHtmlPrompt(
     ...documentToHtmlLanguageGuidance(markdown, targetLanguage),
     "",
     "Document-to-html design language:",
-    "- warm paper background, terracotta accent, warm near-black ink.",
-    "- Archivo-style sans stack for prose and headings, JetBrains Mono-style stack for section labels, tags, KPI values, and table heads.",
+    "- Follow Kami's restrained editorial language: parchment #f5f4ed, ivory #faf9f5, warm near-black #141413, warm gray text, and ink blue #1B365D as the only chromatic accent.",
+    "- Use a Charter, Iowan Old Style, Palatino, Georgia serif stack for English prose and headings. Use appropriate CJK serif fallbacks for Chinese or Japanese. Use a JetBrains Mono-style stack only for labels, tags, KPI values, and table heads.",
     "- Section labels use numeric prefixes. For English pages, examples include 01 · THESIS, 02 · PRODUCT, 03 · TRACTION, 04 · RISKS. For Chinese pages, use Chinese labels such as 01 · 论点, 02 · 市场, 03 · 机会, 04 · 风险.",
     "- Use 3 to 5 sections. Put surface claims in hero, KPI rows, cards, charts, or visible summaries. Put reasoning in <details class=\"x\"> bodies.",
     "- Prefer assertion headings over labels, written in the output language.",
-    "- Use one terracotta focal element per card or chart. Do not make the whole page orange.",
+    "- Use one or two ink blue focal elements per section or diagram. Keep ink blue below about five percent of the page surface.",
+    "- Prefer flat editorial sections, thin warm borders, four to eight pixel radii, and quiet ring shadows. Avoid glossy cards, gradients, pill-heavy layouts, and hard drop shadows.",
     "- Cut internal notes, self-coaching, QA prompts, and sensitive deal terms unless the source clearly frames them as public-facing.",
     "",
     "Contrast checklist (blocking before writing the artifact):",
@@ -349,8 +373,25 @@ function documentToHtmlPrompt(
     "Required CSS base and components to include inside <style data-document-to-html>:",
     documentToHtmlCss(),
     "",
-    "Build a complete page from notion.md. If the document has quantitative content, use KPI cards, a small chart, or a table. If it has a mechanism, use a simple token-driven SVG concept diagram. Every major claim should have an expandable detail row.",
+    "Build a complete page from notion.md. If the document has quantitative content, use KPI cards, a small chart, or a table. Render mechanisms as diagram images through the generated-assets contract. Every major claim should have an expandable detail row.",
   ].join("\n");
+}
+
+function generatedDiagramPromptLines(markdown: string, enabled: boolean): string[] {
+  if (!enabled) {
+    return ["- Do not output inline SVG or generated asset references because this caller has no generated-asset storage."];
+  }
+
+  const mermaidCount = countMermaidBlocks(markdown);
+  return [
+    `- Source Mermaid blocks: ${mermaidCount}. Render every block to a separate PNG image; omission is a generation failure.`,
+    "- Treat Mermaid and every concept diagram as images. Write PNG files under generated-assets/ and reference each one as <img src=\"generated-assets/descriptive-name.png\" alt=\"...\">.",
+    "- Use the document-to-html skill renderer when available. Do not put Mermaid syntax, inline SVG, data URLs, canvas, or chart runtime JavaScript in artifact.html.",
+    "- Keep generated image filenames flat and limited to ASCII letters, digits, dots, underscores, and hyphens.",
+    "- A diagram must teach hierarchy, direction, or magnitude better than a paragraph. Use a table for simple comparison and prose for a single labeled box.",
+    "- Keep editorial diagram density near 4/10 with at most 9 nodes. Split larger ideas. Highlight only 1 or 2 focal nodes.",
+    "- Render diagrams on #f5f4ed with #faf9f5 nodes, #504e49 connectors, #141413 text, #e8e6dc borders, and #1B365D only for focal paths. Use orthogonal connectors and short text labels.",
+  ];
 }
 
 function notionDatabasePromptLines(notionUrl: string, markdown: string): string[] {
@@ -417,9 +458,18 @@ function hasSourceCoverage(html: string, markdown: string): boolean {
 function sourceCoverageAnchors(markdown: string): string[] {
   const anchors: string[] = [];
   const seen = new Set<string>();
+  let insideMermaidBlock = false;
 
   for (const rawLine of markdown.split(/\r?\n/)) {
     const line = rawLine.trim();
+    if (!insideMermaidBlock && /^```mermaid\s*$/i.test(line)) {
+      insideMermaidBlock = true;
+      continue;
+    }
+    if (insideMermaidBlock) {
+      if (/^```\s*$/.test(line)) insideMermaidBlock = false;
+      continue;
+    }
     if (!line || /^#{1,6}\s+/.test(line) || isLowSignalSourceLine(line)) continue;
 
     const anchor = cleanCoverageAnchor(line);
@@ -663,14 +713,14 @@ function truncateForError(text: string): string {
 function documentToHtmlCss(): string {
   return `
 :root {
-  --bg: oklch(.987 .005 78); --surface: oklch(.967 .006 78); --surface2: oklch(.945 .008 78);
-  --border: oklch(.885 .008 72); --border-strong: oklch(.80 .010 72);
-  --text: oklch(.255 .013 60); --text-soft: oklch(.435 .012 62); --muted: oklch(.58 .010 62);
-  --accent: oklch(.575 .185 33); --accent-ink: oklch(.48 .19 33); --accent-soft: oklch(.955 .035 44);
-  --good: oklch(.55 .12 150); --good-soft: oklch(.95 .04 150);
-  --warn: oklch(.60 .115 72); --warn-soft: oklch(.955 .045 80);
+  --bg: #f5f4ed; --surface: #faf9f5; --surface2: #e8e6dc;
+  --border: #e8e6dc; --border-strong: #b2b1ac;
+  --text: #141413; --text-soft: #3d3d3a; --muted: #6b6a64;
+  --accent: #1B365D; --accent-ink: #1B365D; --accent-soft: #EEF2F7;
+  --good: #3f5a45; --good-soft: #edf1eb;
+  --warn: #8b5f2b; --warn-soft: #f1e9dd;
   --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
-  --sans: "Archivo", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Helvetica Neue", sans-serif;
+  --sans: Charter, "Iowan Old Style", Palatino, "Palatino Linotype", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", Georgia, serif;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html { scroll-behavior: smooth; }
@@ -678,32 +728,32 @@ body { background: var(--bg); color: var(--text); font-family: var(--sans); line
 .wrap { max-width: 1120px; margin: 0 auto; padding: 64px 40px 80px; }
 .hero { padding: 48px 0 56px; border-bottom: 1px solid var(--text); }
 .brand { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; color: var(--accent-ink); font-weight: 600; text-transform: uppercase; margin-bottom: 24px; }
-h1 { font-size: 48px; line-height: 1.08; font-weight: 700; letter-spacing: 0; margin-bottom: 20px; }
+h1 { font-size: 48px; line-height: 1.08; font-weight: 500; letter-spacing: 0; margin-bottom: 20px; }
 h1 .hl { color: var(--accent); }
 .hero-tagline { font-size: 20px; color: var(--text-soft); max-width: 760px; line-height: 1.5; }
 .hero-tagline b { color: var(--accent-ink); font-weight: 600; }
 section { padding: 56px 0; border-bottom: 1px solid var(--border); }
 .shead { display: flex; align-items: baseline; gap: 14px; margin-bottom: 14px; }
 .sec-label { font-family: var(--mono); font-size: 12.5px; letter-spacing: .06em; color: var(--accent-ink); font-weight: 700; text-transform: uppercase; }
-h2 { font-size: 30px; font-weight: 700; letter-spacing: 0; }
+h2 { font-size: 30px; font-weight: 500; letter-spacing: 0; }
 .lede { font-size: 17px; color: var(--text-soft); max-width: 820px; margin-bottom: 36px; }
 .lede b { color: var(--text); font-weight: 600; }
 a { color: var(--accent-ink); text-decoration: none; }
 pre { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.55; color: var(--text); }
 code { font-family: var(--mono); font-size: .9em; background: var(--surface); border: 1px solid var(--border); padding: 1px 5px; border-radius: 4px; }
 pre code { background: transparent; border: 0; padding: 0; font-size: inherit; }
-.story { background: var(--surface); border-left: 3px solid var(--accent); padding: 28px 32px; border-radius: 0 12px 12px 0; margin-bottom: 36px; font-size: 16.5px; color: var(--text-soft); line-height: 1.7; }
+.story { background: var(--surface); border-left: 2px solid var(--accent); padding: 28px 32px; border-radius: 0 4px 4px 0; margin-bottom: 36px; font-size: 16.5px; color: var(--text-soft); line-height: 1.55; }
 .story b { color: var(--accent-ink); font-weight: 600; }
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 18px; margin-bottom: 24px; }
-.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px; text-align: center; }
+.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 22px; text-align: center; }
 .kpi.focal { border-color: var(--accent); }
 .kpi .n { font-family: var(--mono); font-size: 34px; font-weight: 700; letter-spacing: 0; color: var(--text); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .kpi.focal .n { color: var(--accent-ink); }
 .kpi .l { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
 .geo-grid, .dir-grid, .edge-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 28px; }
 .dir-grid { grid-template-columns: 1fr 1fr; }
-.geo, .dir, .edge, .chart-box, .diagram-box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 26px 24px; }
-.geo.hot, .kpi.focal { border-color: var(--accent); background: linear-gradient(180deg, var(--accent-soft), var(--surface)); }
+.geo, .dir, .edge, .chart-box, .diagram-box { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 26px 24px; }
+.geo.hot, .kpi.focal { border-color: var(--accent); background: var(--accent-soft); }
 .tag, .pill { display: inline-block; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; padding: 4px 10px; border-radius: 99px; margin: 2px 4px 14px 0; font-weight: 600; text-transform: uppercase; background: var(--surface2); color: var(--muted); }
 .tag.open, .pill.f { background: var(--accent); border-color: var(--accent); color: #fff; }
 .geo h3, .dir h3, .edge h3 { font-size: 20px; font-weight: 700; letter-spacing: 0; margin-bottom: 8px; }
@@ -751,6 +801,79 @@ tbody td:first-child { color: var(--text); font-weight: 600; }
   thead { display: none; } tbody td { display: block; border: none; padding: 4px 14px; } tbody tr { border-bottom: 1px solid var(--border); padding: 10px 0; }
 }
 `;
+}
+
+const generatedDiagramReferencePattern = /(?:\.?\/)?generated-assets\/([a-z0-9][a-z0-9._-]{0,120}\.png)/gi;
+const maxGeneratedDiagramCount = 12;
+const maxGeneratedDiagramBytes = 8 * 1024 * 1024;
+const maxGeneratedDiagramTotalBytes = 32 * 1024 * 1024;
+const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+async function persistGeneratedDiagramAssets(input: {
+  html: string;
+  generatedAssetsPath: string;
+  pageId: string;
+  requiredMermaidCount: number;
+}): Promise<string> {
+  if (/<svg\b/i.test(input.html)) {
+    throw new Error("Codex returned inline SVG; Mermaid and concept diagrams must be rendered as PNG images.");
+  }
+
+  const references = [...input.html.matchAll(generatedDiagramReferencePattern)];
+  const filenames = [...new Set(references.map((match) => match[1]))];
+  if (filenames.length < input.requiredMermaidCount) {
+    throw new Error(
+      `Codex rendered ${filenames.length} diagram images for ${input.requiredMermaidCount} Mermaid blocks.`,
+    );
+  }
+  if (filenames.length > maxGeneratedDiagramCount) {
+    throw new Error(`Codex generated too many diagram images: ${filenames.length}.`);
+  }
+
+  let totalBytes = 0;
+  let rewritten = input.html;
+  for (const filename of filenames) {
+    const path = join(input.generatedAssetsPath, filename);
+    const stats = await lstat(path).catch(() => null);
+    if (!stats?.isFile() || stats.isSymbolicLink()) {
+      throw new Error(`Generated diagram image is missing or unsafe: ${filename}.`);
+    }
+
+    const bytes = await readFile(path);
+    totalBytes += bytes.byteLength;
+    if (bytes.byteLength === 0 || bytes.byteLength > maxGeneratedDiagramBytes) {
+      throw new Error(`Generated diagram image has an invalid size: ${filename}.`);
+    }
+    if (totalBytes > maxGeneratedDiagramTotalBytes) {
+      throw new Error("Generated diagram images exceed the total size limit.");
+    }
+    if (!bytes.subarray(0, pngSignature.byteLength).equals(pngSignature)) {
+      throw new Error(`Generated diagram image is not a PNG: ${filename}.`);
+    }
+
+    const digest = createHash("sha256").update(bytes).digest("hex").slice(0, 32);
+    const objectKey = `assets/pages/${input.pageId}/generated/${digest}.png`;
+    const localUrl = `/${objectKey}`;
+    await putBinaryObject(objectKey, bytes, "image/png");
+    rewritten = rewritten.replace(
+      new RegExp(`(?:\\.?\\/)?generated-assets\\/${escapeRegExp(filename)}`, "g"),
+      localUrl,
+    );
+  }
+
+  if (/generated-assets\//i.test(rewritten)) {
+    throw new Error("Generated HTML contains an invalid diagram asset reference.");
+  }
+
+  return rewritten;
+}
+
+function countMermaidBlocks(markdown: string): number {
+  return [...markdown.matchAll(/^```mermaid\s*$[\s\S]*?^```\s*$/gim)].length;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function sanitizeGeneratedHtml(raw: string): string {
@@ -835,6 +958,15 @@ function sanitizeGeneratedHtml(raw: string): string {
   }
 
   return sanitized;
+}
+
+function removeIosgLogoImages(html: string): string {
+  return html.replace(/<img\b[^>]*>/gi, (tag) => {
+    const normalized = tag.toLowerCase();
+    const namesIosgBrand = /(?:alt|title)=(?:"[^"]*(?:iosg[^"<>]*(?:logo|wordmark)|(?:logo|wordmark)[^"<>]*iosg)[^"]*"|'[^']*(?:iosg[^'<>]*(?:logo|wordmark)|(?:logo|wordmark)[^'<>]*iosg)[^']*')/i.test(tag);
+    const sourceNamesIosgBrand = /src=(?:"[^"]*(?:iosg[-_. ]*(?:logo|wordmark)|(?:logo|wordmark)[-_. ]*iosg)[^"]*"|'[^']*(?:iosg[-_. ]*(?:logo|wordmark)|(?:logo|wordmark)[-_. ]*iosg)[^']*')/i.test(tag);
+    return namesIosgBrand || sourceNamesIosgBrand || normalized.includes("data-iosg-logo") ? "" : tag;
+  });
 }
 
 function sanitizeStyleBlocks(html: string): string {

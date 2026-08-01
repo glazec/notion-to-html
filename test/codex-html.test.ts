@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 describe("Codex document-to-html generation", () => {
@@ -31,6 +31,7 @@ describe("Codex document-to-html generation", () => {
           "</style>",
           "<main class=\"document-html-page wrap\">",
           "<section class=\"hero\"><div class=\"brand\">IOSG VENTURES · NOTION</div><h1>1Money <span class=\"hl\">stablecoin stack</span></h1></section>",
+          "<img src=\"https://example.com/iosg-logo.png\" alt=\"IOSG logo\">",
           "<details class=\"x\"><summary><span class=\"t\">Why it matters</span></summary><div class=\"body\">Depth</div></details>",
           "<script>alert('bad')</script>",
           "</main>",
@@ -49,8 +50,9 @@ describe("Codex document-to-html generation", () => {
 
     const prompt = calls[0].args.at(-1) ?? "";
     expect(prompt).toContain("document-to-html");
-    expect(prompt).toContain("warm paper");
-    expect(prompt).toContain("terracotta");
+    expect(prompt).toContain("Kami's restrained editorial language");
+    expect(prompt).toContain("ink blue #1B365D");
+    expect(prompt).toContain("Do not include the IOSG name, IOSG logo, IOSG wordmark");
     expect(prompt).toContain("details class=\"x\"");
     expect(prompt).toContain("Contrast checklist");
     expect(prompt).toContain("4.5:1");
@@ -60,7 +62,7 @@ describe("Codex document-to-html generation", () => {
     expect(prompt).not.toMatch(/font-size:\s*[^;]*vw/i);
     expect(prompt).not.toMatch(/letter-spacing:\s*-/i);
     expect(calls[0].args).toContain("--model");
-    expect(calls[0].args[calls[0].args.indexOf("--model") + 1]).toBe("cx/gpt-5.6-terra-xhigh");
+    expect(calls[0].args[calls[0].args.indexOf("--model") + 1]).toBe("cx/gpt-5.6-terra-medium");
     expect(calls[0].args).toContain("model_provider=\"inevitable_gateway\"");
     expect(calls[0].args).toContain(
       'model_providers.inevitable_gateway.base_url="https://aigateway.inevitable.tech/v1"',
@@ -81,6 +83,8 @@ describe("Codex document-to-html generation", () => {
     expect(body).toContain("document-html-page wrap");
     expect(body).toContain("<details class=\"x\">");
     expect(body).not.toContain("<script");
+    expect(body).not.toContain("iosg-logo.png");
+    expect(body).not.toContain("alt=\"IOSG logo\"");
     expect(body).not.toContain("```");
     expect(endStdin).toHaveBeenCalledOnce();
 
@@ -130,6 +134,134 @@ describe("Codex document-to-html generation", () => {
     expect(body).not.toContain("onerror");
     expect(body).not.toContain("<svg");
     expect(body).not.toContain("<script");
+
+    vi.unstubAllEnvs();
+  });
+
+  it("uses low reasoning for narrow image descriptions", async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key");
+    let invocationArgs: string[] = [];
+
+    vi.doMock("node:child_process", () => ({
+      execFile: (
+        _file: string,
+        args: string[],
+        _options: { timeout?: number },
+        callback: (error: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        invocationArgs = args;
+        const outputPath = args[args.indexOf("-o") + 1];
+        writeFileSync(outputPath, "A settlement dashboard showing validator status.");
+        callback(null, "", "");
+        return { stdin: { end: vi.fn() } };
+      },
+    }));
+
+    const { describeImageAsset } = await import("@/lib/codex-generator");
+    const description = await describeImageAsset({
+      imagePath: "/tmp/dashboard.png",
+      altText: "Settlement dashboard",
+      sourceUrl: "https://example.com/dashboard.png",
+    });
+
+    expect(invocationArgs[invocationArgs.indexOf("--model") + 1]).toBe("cx/gpt-5.6-terra-low");
+    expect(description).toBe("A settlement dashboard showing validator status.");
+    vi.unstubAllEnvs();
+  });
+
+  it("stores generated Mermaid PNG images and rewrites their HTML references", async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+    const putBinaryObject = vi.fn();
+    let prompt = "";
+
+    vi.doMock("@/lib/bucket", () => ({ putBinaryObject }));
+    vi.doMock("node:child_process", () => ({
+      execFile: (
+        _file: string,
+        args: string[],
+        options: { cwd?: string },
+        callback: (error: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        prompt = args.at(-1) ?? "";
+        const cwd = options.cwd ?? "";
+        const outputPath = args[args.indexOf("-o") + 1];
+        mkdirSync(`${cwd}/generated-assets`, { recursive: true });
+        writeFileSync(
+          `${cwd}/generated-assets/architecture.png`,
+          Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]),
+        );
+        writeFileSync(outputPath, [
+          "<style data-document-to-html>:root { --bg: #fff; }</style>",
+          "<main class=\"document-html-page wrap\">",
+          "<h1>Quant Platform</h1>",
+          "<figure class=\"mermaid-chart\"><img src=\"generated-assets/architecture.png\" alt=\"External API to published version\"></figure>",
+          "</main>",
+        ].join("\n"));
+        callback(null, "", "");
+        return { stdin: { end: vi.fn() } };
+      },
+    }));
+
+    const { generateDocumentHtmlBody } = await import("@/lib/codex-generator");
+    const body = await generateDocumentHtmlBody({
+      notionUrl: "https://notion.so/test",
+      pageId: "page-id",
+      markdown: [
+        "# Quant Platform",
+        "```mermaid",
+        "flowchart LR",
+        "  API --> Published",
+        "```",
+      ].join("\n"),
+    });
+
+    expect(prompt).toContain("Source Mermaid blocks: 1");
+    expect(prompt).toContain("Treat Mermaid and every concept diagram as images");
+    expect(putBinaryObject).toHaveBeenCalledWith(
+      expect.stringMatching(/^assets\/pages\/page-id\/generated\/[a-f0-9]{32}\.png$/),
+      expect.any(Uint8Array),
+      "image/png",
+    );
+    expect(body).toMatch(/<img src="\/assets\/pages\/page-id\/generated\/[a-f0-9]{32}\.png"/);
+    expect(body).not.toContain("generated-assets/");
+    expect(body).not.toContain("<svg");
+
+    vi.doUnmock("@/lib/bucket");
+    vi.unstubAllEnvs();
+  });
+
+  it("rejects generated HTML that flattens a Mermaid block instead of rendering an image", async () => {
+    vi.resetModules();
+    vi.unstubAllEnvs();
+    vi.stubEnv("CODEX_ACCESS_TOKEN", "token");
+
+    vi.doMock("node:child_process", () => ({
+      execFile: (
+        _file: string,
+        args: string[],
+        _options: { cwd?: string },
+        callback: (error: Error | null, stdout?: string, stderr?: string) => void,
+      ) => {
+        const outputPath = args[args.indexOf("-o") + 1];
+        writeFileSync(outputPath, [
+          "<style data-document-to-html>:root { --bg: #fff; }</style>",
+          "<main class=\"document-html-page wrap\"><h1>Quant Platform</h1><p>API Published</p></main>",
+        ].join("\n"));
+        callback(null, "", "");
+        return { stdin: { end: vi.fn() } };
+      },
+    }));
+
+    const { generateDocumentHtmlBody } = await import("@/lib/codex-generator");
+    await expect(generateDocumentHtmlBody({
+      notionUrl: "https://notion.so/test",
+      pageId: "page-id",
+      markdown: "# Quant Platform\n\n```mermaid\nflowchart LR\n  API --> Published\n```",
+    })).rejects.toThrow("Codex rendered 0 diagram images for 1 Mermaid blocks");
 
     vi.unstubAllEnvs();
   });

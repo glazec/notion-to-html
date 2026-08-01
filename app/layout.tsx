@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Notion to HTML",
-  description: "Publish Notion pages as generated HTML.",
+  description: "Turn public Notion pages into carefully typeset websites.",
   icons: {
     icon: "/favicon.svg",
   },

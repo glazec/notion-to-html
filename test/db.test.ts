@@ -67,5 +67,7 @@ describe("database schema", () => {
     await ensureSchema();
 
     expect(statements.join("\n")).toContain("preferred_language text not null default 'auto'");
+    expect(statements.join("\n")).toContain("create table if not exists user_sites");
+    expect(statements.join("\n")).toContain("create table if not exists daily_site_usage");
   });
 });

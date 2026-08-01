@@ -90,6 +90,24 @@ describe("generated HTML connections", () => {
     expect(output).toContain("A chart showing Kiln operating performance.");
   });
 
+  it("omits Notion user avatars from fallback visual references", async () => {
+    const { preserveGeneratedConnections } = await import("@/lib/generated-connections");
+    const output = preserveGeneratedConnections(
+      '<style data-document-to-html></style><main class="document-html-page wrap"></main>',
+      [
+        "# Quant Platform Chinese",
+        "### Image 1: YiPing Lu",
+        "Local image: /assets/pages/page-id/images/yiping.png",
+        "Original image: https://example.com/yiping.png",
+        "Codex image description: A purple square profile avatar displaying a white capital Y, representing YiPing Lu.",
+      ].join("\n"),
+    );
+
+    expect(output).not.toContain("visual-assets");
+    expect(output).not.toContain("yiping.png");
+    expect(output).not.toContain("profile avatar");
+  });
+
   it("keeps an image description even when Codex already included the image", async () => {
     const { preserveGeneratedConnections } = await import("@/lib/generated-connections");
     const output = preserveGeneratedConnections(

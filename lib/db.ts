@@ -117,6 +117,24 @@ async function migrateSchema(): Promise<void> {
       generated_at timestamptz not null default now(),
       unique(page_key, content_hash)
     );
+
+    create table if not exists user_sites (
+      user_id text not null,
+      page_key text not null references pages(page_key) on delete cascade,
+      created_at timestamptz not null default now(),
+      primary key(user_id, page_key)
+    );
+
+    create index if not exists user_sites_user_created_idx
+      on user_sites(user_id, created_at desc);
+
+    create table if not exists daily_site_usage (
+      user_id text not null,
+      usage_date date not null,
+      used_count integer not null check (used_count >= 0),
+      updated_at timestamptz not null default now(),
+      primary key(user_id, usage_date)
+    );
   `);
     await client.query("commit");
   } catch (error) {

@@ -2,16 +2,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetRateLimitsForTests } from "@/lib/rate-limit";
 
 const send = vi.fn();
-const upsertPageFromNotionUrl = vi.fn();
+const createUserSiteFromNotionUrl = vi.fn();
+const getCurrentUser = vi.fn();
 
 vi.mock("@/inngest/client", () => ({
   events: { generatePage: "page/generate" },
   inngest: { send },
 }));
 
-vi.mock("@/lib/page-store", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/page-store")>()),
-  upsertPageFromNotionUrl,
+vi.mock("@/lib/auth/server", () => ({ getCurrentUser }));
+
+vi.mock("@/lib/site-credits", () => ({
+  createUserSiteFromNotionUrl,
+  isDailySiteLimitError: () => false,
 }));
 
 describe("pages route", () => {
@@ -21,10 +24,12 @@ describe("pages route", () => {
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://notion-to-html.test");
     resetRateLimitsForTests();
     send.mockReset();
-    upsertPageFromNotionUrl.mockReset();
-    upsertPageFromNotionUrl.mockResolvedValue({
-      page_key: "0123456789abcd",
-      slug: "Test",
+    getCurrentUser.mockReset();
+    getCurrentUser.mockResolvedValue({ id: "user-1", email: "reader@example.com" });
+    createUserSiteFromNotionUrl.mockReset();
+    createUserSiteFromNotionUrl.mockResolvedValue({
+      page: { page_key: "0123456789abcd", slug: "Test" },
+      siteCreated: true,
     });
   });
 
@@ -41,8 +46,21 @@ describe("pages route", () => {
 
     expect(denied.status).toBe(429);
     expect(await denied.json()).toEqual({ error: "Initial generation rate limit exceeded" });
-    expect(upsertPageFromNotionUrl).toHaveBeenCalledTimes(20);
+    expect(createUserSiteFromNotionUrl).toHaveBeenCalledTimes(20);
     expect(send).toHaveBeenCalledTimes(20);
+  });
+
+  it("requires Google authentication before spending a site credit", async () => {
+    getCurrentUser.mockResolvedValueOnce(null);
+    const { POST } = await import("@/app/api/pages/route");
+    const response = await POST(pageRequest(
+      "https://app.notion.com/p/ws/Test-0123456789abcdef0123456789abcdef",
+      "203.0.113.50",
+    ));
+
+    expect(response.status).toBe(401);
+    expect(createUserSiteFromNotionUrl).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
   });
 });
 

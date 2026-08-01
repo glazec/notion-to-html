@@ -4,6 +4,8 @@ import { resetRateLimitsForTests } from "@/lib/rate-limit";
 const findPage = vi.fn();
 const setPagePreferredLanguage = vi.fn();
 const send = vi.fn();
+const getCurrentUser = vi.fn();
+const userOwnsSite = vi.fn();
 
 vi.mock("@/lib/page-store", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/page-store")>()),
@@ -16,6 +18,9 @@ vi.mock("@/inngest/client", () => ({
   inngest: { send },
 }));
 
+vi.mock("@/lib/auth/server", () => ({ getCurrentUser }));
+vi.mock("@/lib/site-credits", () => ({ userOwnsSite }));
+
 describe("language route", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -25,6 +30,10 @@ describe("language route", () => {
     findPage.mockReset();
     setPagePreferredLanguage.mockReset();
     send.mockReset();
+    getCurrentUser.mockReset();
+    getCurrentUser.mockResolvedValue({ id: "user-1", email: "reader@example.com" });
+    userOwnsSite.mockReset();
+    userOwnsSite.mockResolvedValue(true);
     findPage.mockResolvedValue({
       page_key: "0123456789abcd",
       slug: "Test",

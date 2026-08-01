@@ -109,8 +109,14 @@ function extractImageConnections(markdown: string): MarkdownImageConnection[] {
     if (seen.has(image.localUrl)) return false;
     seen.add(image.localUrl);
     if (isDecorativeEmojiImage(image)) return false;
+    if (isUserAvatarImage(image)) return false;
     return true;
   });
+}
+
+function isUserAvatarImage(image: MarkdownImageConnection): boolean {
+  const text = `${image.alt}\n${image.description}`.toLowerCase();
+  return /\b(?:user|author|owner|profile)?\s*avatar\b|\bprofile\s+(?:photo|picture|image)\b|\binitials?\s+(?:avatar|tile)\b/.test(text);
 }
 
 function extractNotionLinks(markdown: string): NotionLinkConnection[] {

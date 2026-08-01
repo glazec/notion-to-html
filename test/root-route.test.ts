@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetRateLimitsForTests } from "@/lib/rate-limit";
 
 const send = vi.fn();
-const upsertPageFromNotionUrl = vi.fn();
+const createUserSiteFromNotionUrl = vi.fn();
+const getCurrentUser = vi.fn();
 const findPageBySlug = vi.fn();
 const servedPageResponse = vi.fn();
 
@@ -12,8 +13,14 @@ vi.mock("@/inngest/client", () => ({
 }));
 
 vi.mock("@/lib/page-store", () => ({
-  upsertPageFromNotionUrl,
   findPageBySlug,
+}));
+
+vi.mock("@/lib/auth/server", () => ({ getCurrentUser }));
+
+vi.mock("@/lib/site-credits", () => ({
+  createUserSiteFromNotionUrl,
+  isDailySiteLimitError: () => false,
 }));
 
 vi.mock("@/lib/page-response", () => ({
@@ -27,7 +34,9 @@ describe("root path route", () => {
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://notion-to-html.test");
     resetRateLimitsForTests();
     send.mockReset();
-    upsertPageFromNotionUrl.mockReset();
+    getCurrentUser.mockReset();
+    getCurrentUser.mockResolvedValue({ id: "user-1", email: "reader@example.com" });
+    createUserSiteFromNotionUrl.mockReset();
     findPageBySlug.mockReset();
     servedPageResponse.mockReset();
   });
@@ -64,9 +73,9 @@ describe("root path route", () => {
     ];
 
     for (const testCase of cases) {
-      upsertPageFromNotionUrl.mockResolvedValueOnce({
-        page_key: testCase.pageKey,
-        slug: testCase.slug,
+      createUserSiteFromNotionUrl.mockResolvedValueOnce({
+        page: { page_key: testCase.pageKey, slug: testCase.slug },
+        siteCreated: true,
       });
 
       const response = await GET(
@@ -78,10 +87,11 @@ describe("root path route", () => {
         },
       );
 
-      expect(upsertPageFromNotionUrl).toHaveBeenLastCalledWith(
-        testCase.notionUrl,
-        { userTransformed: false },
-      );
+      expect(createUserSiteFromNotionUrl).toHaveBeenLastCalledWith({
+        notionUrl: testCase.notionUrl,
+        userId: "user-1",
+        email: "reader@example.com",
+      });
       expect(send).toHaveBeenLastCalledWith(expect.objectContaining({
         name: "page/generate",
         data: expect.objectContaining({ pageKey: testCase.pageKey }),
@@ -93,9 +103,12 @@ describe("root path route", () => {
 
   it("treats app.no7ion.com paths as app.notion.com source URLs", async () => {
     const { GET } = await import("@/app/[...pagePath]/route");
-    upsertPageFromNotionUrl.mockResolvedValueOnce({
-      page_key: "38bf0ada243c80",
-      slug: "Computation-Financialization-Sourcing",
+    createUserSiteFromNotionUrl.mockResolvedValueOnce({
+      page: {
+        page_key: "38bf0ada243c80",
+        slug: "Computation-Financialization-Sourcing",
+      },
+      siteCreated: true,
     });
 
     const response = await GET(
@@ -111,10 +124,11 @@ describe("root path route", () => {
       },
     );
 
-    expect(upsertPageFromNotionUrl).toHaveBeenCalledWith(
-      "https://app.notion.com/p/iosgvc/Computation-Financialization-Sourcing-38bf0ada243c80c0b59ccb6d3dd4ab0d",
-      { userTransformed: false },
-    );
+    expect(createUserSiteFromNotionUrl).toHaveBeenCalledWith({
+      notionUrl: "https://app.notion.com/p/iosgvc/Computation-Financialization-Sourcing-38bf0ada243c80c0b59ccb6d3dd4ab0d",
+      userId: "user-1",
+      email: "reader@example.com",
+    });
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
       name: "page/generate",
       data: expect.objectContaining({
@@ -128,9 +142,9 @@ describe("root path route", () => {
 
   it("rate limits pasted URL path generation before creating more jobs", async () => {
     const { GET } = await import("@/app/[...pagePath]/route");
-    upsertPageFromNotionUrl.mockResolvedValue({
-      page_key: "37cf0ada243c81",
-      slug: "1Money-6-11-2026-EN",
+    createUserSiteFromNotionUrl.mockResolvedValue({
+      page: { page_key: "37cf0ada243c81", slug: "1Money-6-11-2026-EN" },
+      siteCreated: true,
     });
     const pagePath = [
       "https:",
@@ -149,7 +163,7 @@ describe("root path route", () => {
 
     expect(denied.status).toBe(429);
     expect(await denied.json()).toEqual({ error: "Initial generation rate limit exceeded" });
-    expect(upsertPageFromNotionUrl).toHaveBeenCalledTimes(20);
+    expect(createUserSiteFromNotionUrl).toHaveBeenCalledTimes(20);
     expect(send).toHaveBeenCalledTimes(20);
   });
 });

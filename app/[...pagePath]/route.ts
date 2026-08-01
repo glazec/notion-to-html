@@ -4,8 +4,10 @@ import { appUrl } from "@/lib/env";
 import { isMissingEnvError, missingConfigResponse } from "@/lib/http-errors";
 import { checkInitialGenerationRateLimit } from "@/lib/initial-generation-rate-limit";
 import { notionUrlFromNo7ionHostAlias, notionUrlFromPathSegments } from "@/lib/notion";
-import { findPageBySlug, upsertPageFromNotionUrl } from "@/lib/page-store";
+import { findPageBySlug } from "@/lib/page-store";
 import { servedPageResponse } from "@/lib/page-response";
+import { getCurrentUser } from "@/lib/auth/server";
+import { createUserSiteFromNotionUrl, isDailySiteLimitError } from "@/lib/site-credits";
 
 export const runtime = "nodejs";
 
@@ -40,6 +42,13 @@ export async function GET(
 }
 
 async function pastedNotionUrlRedirect(request: Request, notionUrl: string): Promise<Response> {
+  const user = await getCurrentUser();
+  if (!user) {
+    const signInUrl = new URL("/", appUrl());
+    signInUrl.searchParams.set("notice", "sign-in-required");
+    return NextResponse.redirect(signInUrl, { status: 303 });
+  }
+
   if (!checkInitialGenerationRateLimit(request)) {
     return NextResponse.json({ error: "Initial generation rate limit exceeded" }, { status: 429 });
   }
@@ -47,10 +56,17 @@ async function pastedNotionUrlRedirect(request: Request, notionUrl: string): Pro
   let page;
 
   try {
-    page = await upsertPageFromNotionUrl(notionUrl, { userTransformed: false });
+    page = (await createUserSiteFromNotionUrl({
+      notionUrl,
+      userId: user.id,
+      email: user.email,
+    })).page;
   } catch (error) {
     if (isMissingEnvError(error)) {
       return missingConfigResponse(error);
+    }
+    if (isDailySiteLimitError(error)) {
+      return NextResponse.json({ error: error.message }, { status: 429 });
     }
     throw error;
   }

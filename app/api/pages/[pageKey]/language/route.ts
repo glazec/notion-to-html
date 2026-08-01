@@ -3,6 +3,8 @@ import { events, inngest } from "@/inngest/client";
 import { appUrl } from "@/lib/env";
 import { findPage, isPageLanguage, setPagePreferredLanguage } from "@/lib/page-store";
 import { checkRateLimitGroup, rateLimitKeyFromRequest } from "@/lib/rate-limit";
+import { getCurrentUser } from "@/lib/auth/server";
+import { userOwnsSite } from "@/lib/site-credits";
 
 export const runtime = "nodejs";
 
@@ -10,6 +12,11 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ pageKey: string }> },
 ) {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Sign in to change this site" }, { status: 401 });
+  }
+
   const form = await request.formData();
   const language = form.get("language");
 
@@ -22,6 +29,10 @@ export async function POST(
 
   if (!page) {
     return NextResponse.json({ error: "Page not found" }, { status: 404 });
+  }
+
+  if (!await userOwnsSite(user.id, pageKey)) {
+    return NextResponse.json({ error: "You do not own this site" }, { status: 403 });
   }
 
   if (page.preferred_language === language) {

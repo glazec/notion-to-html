@@ -4,6 +4,8 @@ import { checkRateLimit, resetRateLimitsForTests } from "@/lib/rate-limit";
 const findPage = vi.fn();
 const markPageDirty = vi.fn();
 const send = vi.fn();
+const getCurrentUser = vi.fn();
+const userOwnsSite = vi.fn();
 
 vi.mock("@/lib/page-store", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/page-store")>()),
@@ -16,6 +18,9 @@ vi.mock("@/inngest/client", () => ({
   inngest: { send },
 }));
 
+vi.mock("@/lib/auth/server", () => ({ getCurrentUser }));
+vi.mock("@/lib/site-credits", () => ({ userOwnsSite }));
+
 describe("regenerate route", () => {
   beforeEach(() => {
     vi.unstubAllEnvs();
@@ -24,10 +29,26 @@ describe("regenerate route", () => {
     findPage.mockReset();
     markPageDirty.mockReset();
     send.mockReset();
+    getCurrentUser.mockReset();
+    getCurrentUser.mockResolvedValue({ id: "user-1", email: "reader@example.com" });
+    userOwnsSite.mockReset();
+    userOwnsSite.mockResolvedValue(true);
     findPage.mockResolvedValue({
       page_key: "0123456789abcd",
       slug: "Test",
     });
+  });
+
+  it("rejects anonymous regeneration before touching the page", async () => {
+    getCurrentUser.mockResolvedValueOnce(null);
+    const { POST } = await import("@/app/api/pages/[pageKey]/regenerate/route");
+    const response = await POST(regenerateRequest("203.0.113.81"), {
+      params: Promise.resolve({ pageKey: "0123456789abcd" }),
+    });
+
+    expect(response.status).toBe(401);
+    expect(findPage).not.toHaveBeenCalled();
+    expect(markPageDirty).not.toHaveBeenCalled();
   });
 
   it("does not burn the page regenerate bucket when the requester IP is already denied", async () => {

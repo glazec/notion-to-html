@@ -158,6 +158,7 @@ describe("page generation", () => {
     expect(steps).toContain("Included 2 Notion comments from 1 discussion");
     expect(steps).toContain("Starting Codex document-to-html generation: 1 image, 1 Notion link");
     expect(steps).toContain("Publishing cached HTML object");
+    expect(generateDocumentHtmlBody).toHaveBeenCalledWith(expect.objectContaining({ pageId: "page-id" }));
   });
 
   it("renders public Notion databases from collection rows instead of partial markdown", async () => {

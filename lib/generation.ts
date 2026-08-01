@@ -127,14 +127,15 @@ export async function generatePage(pageKey: string): Promise<{
       notionUrl: source.url,
     });
     const body = await generateCodexBody({
-        pageKey,
-        markdown: preparedSource.markdown,
-        notionUrl: source.url,
-        targetLanguage: page.preferred_language ?? "auto",
-        imageCount: preparedSource.images.length,
-        notionLinkCount: sourceStats.notionLinkCount,
-        commentCount: source.commentCount,
-      });
+      pageKey,
+      markdown: preparedSource.markdown,
+      notionUrl: source.url,
+      pageId: source.pageId,
+      targetLanguage: page.preferred_language ?? "auto",
+      imageCount: preparedSource.images.length,
+      notionLinkCount: sourceStats.notionLinkCount,
+      commentCount: source.commentCount,
+    });
     await setPageGenerationProgress({
       pageKey,
       status: "generating",
@@ -275,6 +276,7 @@ async function generateCodexBody(input: {
   pageKey: string;
   markdown: string;
   notionUrl: string;
+  pageId: string;
   targetLanguage: PageLanguage;
   imageCount: number;
   notionLinkCount: number;
@@ -298,6 +300,7 @@ async function generateCodexBody(input: {
     () => generateDocumentHtmlBody({
       markdown: input.markdown,
       notionUrl: input.notionUrl,
+      pageId: input.pageId,
       targetLanguage: input.targetLanguage,
     }),
   );
