@@ -138,7 +138,11 @@ export default async function HomePage({
 
       <footer className="footer">
         <span>Notion to HTML</span>
-        <span>Two free sites every day. Unlimited for IOSG accounts.</span>
+        <div className="footer-links">
+          <span>Two free sites every day. Unlimited for IOSG accounts.</span>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+        </div>
       </footer>
     </main>
   );
