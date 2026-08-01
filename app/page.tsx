@@ -36,8 +36,8 @@ export default async function HomePage({
         <div className="hero-copy">
           <h1>Turn public Notion pages into clean HTML.</h1>
           <p className="hero-lede">
-            Paste a public Notion URL. We generate a shareable website, preserve
-            its content and images, and cache it for fast loading.
+            Notion to HTML turns public Notion pages into clean, shareable websites.
+            Paste a public Notion URL to preserve its content and images in fast cached HTML.
           </p>
 
           {notice === "sign-in-required" && (
