@@ -39,6 +39,31 @@ describe("HTML rendering", () => {
     expect(html).toContain("Fresh");
   });
 
+  it("uses Kami styling for deterministic fallback pages", () => {
+    const body = renderHtmlBody(documentFromMarkdown({
+      notionUrl: "https://notion.so/test",
+      markdown: "# Research\n\n## Market structure\n\nA durable reference page.",
+    }));
+    const html = wrapServedHtml({
+      title: "Research",
+      notionUrl: "https://notion.so/test",
+      regeneratePath: "/api/pages/abc/regenerate",
+      body,
+      pageState: {
+        status: "ready",
+        generatedAt: new Date(),
+      },
+    });
+
+    expect(html).toContain("--paper:#f5f4ed");
+    expect(html).toContain("--ivory:#faf9f5");
+    expect(html).toContain("--accent:#1b365d");
+    expect(html).toContain('--serif:Charter,"Iowan Old Style"');
+    expect(html).toContain("body { margin: 0; background: var(--paper);");
+    expect(html).toContain(".nth-table-wrap th { background: var(--ivory); font-family: var(--mono);");
+    expect(html).not.toContain("font-family: Arial, Helvetica, sans-serif");
+  });
+
   it("adds shell-level mobile overflow guards for generated content", () => {
     const html = wrapServedHtml({
       title: "Mobile",
